@@ -1,0 +1,159 @@
+/* ============================================
+   GLOBAL PAGE STYLING
+============================================ */
+body {
+  background:#000;
+  margin:0;
+  font-family: "Segoe UI", sans-serif;
+  overflow:hidden;
+}
+
+h1 {
+  text-align:center;
+  color:#00ffcc;
+  margin-top:36px;
+  font-size:30px;
+  letter-spacing:2px;
+  text-shadow:0 0 12px #00ffcc;
+}
+
+/* ============================================
+   BACKGROUND WALLPAPER
+============================================ */
+#bg-wallpaper {
+  position:fixed;
+  left:0; top:0;
+  width:100vw; height:100vh;
+  object-fit:cover;
+  opacity:0.87;
+  z-index:-2;
+}
+
+/* ============================================
+   LOADING SCREEN
+============================================ */
+#loading-screen {
+  position: fixed;
+  left:0; top:0;
+  width:100vw; height:100vh;
+  background:#000;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:99;
+}
+
+#loading-screen img {
+  max-width:70vw;
+  max-height:70vh;
+  border-radius:20px;
+  box-shadow:0 0 60px #00ffccbb;
+}
+
+/* ============================================
+   MIC ZONE + RIPPLE WAVES
+============================================ */
+.mic-zone {
+  position: fixed;          /* fix to screen instead of image */
+  left: 50%;
+  bottom: 12%;              /* moves mic UP from bottom */
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 10;
+}
+
+
+
+.ripple-ring {
+  position:absolute;
+  width:140px;
+  height:140px;
+  border:3px solid #00ffcc;
+  border-radius:50%;
+  opacity:0;
+  transform:scale(0.5);
+  pointer-events:none;
+  display:none;
+}
+
+.ring1 { animation:ripple 2.5s infinite ease-out; animation-delay:0s; }
+.ring2 { animation:ripple 2.5s infinite ease-out; animation-delay:0.6s; }
+.ring3 { animation:ripple 2.5s infinite ease-out; animation-delay:1.2s; }
+
+@keyframes ripple {
+  0% { opacity:0.6; transform:scale(0.55); }
+  100% { opacity:0; transform:scale(1.9); }
+}
+
+.mic-zone.listening .ripple-ring {
+  display:block;
+}
+
+/* ============================================
+   MIC BUTTON
+============================================ */
+#mic-btn {
+  width:120px;
+  height:120px;
+  background:#00ffcc;
+  border-radius:50%;
+  border:5px solid #ffffff;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  box-shadow:0 0 35px #00ffccaa, 0 0 60px #00ffcc55;
+  transition:0.25s ease;
+  position:relative;
+  z-index:10;
+}
+
+#mic-btn img {
+  width:78px;
+  height:78px;
+  object-fit:contain;
+  filter:drop-shadow(0 0 10px #ffffffaa);
+}
+
+#mic-btn:hover {
+  transform:scale(1.10);
+}
+
+#mic-btn.listening {
+  background:#ff2d55;
+  box-shadow:0 0 45px #ff2d55aa, 0 0 75px #ff2d5566;
+  transform:scale(1.15);
+  animation:pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%,100% { box-shadow:0 0 15px #00ffcc, 0 0 40px #00ffcc88; }
+  50% { box-shadow:0 0 32px #08fff07a, 0 0 52px #00ffcc88; }
+}
+
+/* ============================================
+   TEXT BOXES
+============================================ */
+#transcript, #response {
+  margin-top:18px;
+  min-height:36px;
+  font-size:20px;
+  text-align:center;
+  color:#00fff0;
+  background:rgba(15,31,39,0.42);
+  padding:10px 14px;
+  border-radius:10px;
+  max-width:600px;
+}
+
+/* TALKING GLOW */
+#response.glow {
+  animation:talkglow 1.3s ease-in-out infinite alternate;
+}
+
+@keyframes talkglow {
+  0% { box-shadow:0 0 10px #00ffccaa; }
+  100% { box-shadow:0 0 28px #00ffccdd; }
+}

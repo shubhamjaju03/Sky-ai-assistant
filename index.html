@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" type="image/jpeg" href="/static/ai1234.jpg" />
+  <title>Shubham's Voice Assistant</title>
+
+  <!-- external CSS (keeps UI unchanged) -->
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+
+<body>
+  <!-- LOADING SCREEN -->
+  <div id="loading-screen">
+    <img src="/static/initiating.gif" alt="Starting..." />
+  </div>
+
+  <!-- MAIN UI -->
+  <div id="main-ui" style="display:none;">
+    <img id="bg-wallpaper" src="/static/live_wallpaper.gif" alt="wallpaper" />
+
+    <h1 style="text-align:center; color:#00ffcc; margin-top:36px;">
+      Shubham's Voice Assistant
+    </h1>
+
+    <div class="mic-zone" id="mic-zone">
+      <!-- Ripple rings kept for visual parity with existing CSS -->
+      <div class="ripple-ring ring1"></div>
+      <div class="ripple-ring ring2"></div>
+      <div class="ripple-ring ring3"></div>
+
+      <!-- mic button -->
+      <button id="mic-btn" aria-label="Activate microphone">
+        <img src="/static/mic.png" alt="mic" />
+      </button>
+
+      <div id="transcript"></div>
+      <div id="response"></div>
+    </div>
+  </div>
+
+  <script>
+    /* ========== Helper: sanitize text (client-side extra safety) ========== */
+    function sanitizeForSpeech(text) {
+      if (!text) return "";
+      // remove markdown/symbol characters we never want spoken
+      text = text.replace(/[*_`>#\-\[\]\(\)~]/g, "");
+      // collapse whitespace/newlines
+      text = text.replace(/\s+/g, " ").trim();
+      return text;
+    }
+
+    /* ========== UI references ========== */
+    const micBtn = document.getElementById("mic-btn");
+    const micZone = document.getElementById("mic-zone");
+    const transcriptDiv = document.getElementById("transcript");
+    const responseDiv = document.getElementById("response");
+    const loadingScreen = document.getElementById("loading-screen");
+    const mainUI = document.getElementById("main-ui");
+
+    /* ========== Speech Recognition setup ========== */
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Voice recognition requires Chrome or Edge. Some features may not work.");
+    }
+
+    const recognition = SpeechRecognition ? new SpeechRecognition() : null;
+    if (recognition) {
+      recognition.lang = "en-US";
+      recognition.interimResults = false;
+    }
+
+    /* state flags */
+    let greetedOnce = false;      // greet only once per page load
+    let userInitiated = false;    // user tapped mic at least once
+    let currentlyListening = false;
+
+    /* ========== TTS with optional auto-listen ========== */
+    function speak(text, opts = { autoListen: false }) {
+      text = sanitizeForSpeech(text);
+      if (!text) return;
+
+      // show reply text immediately (sanitized)
+      responseDiv.textContent = text;
+      responseDiv.classList.add("glow");
+
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = "en-US";
+
+      utter.onend = () => {
+        responseDiv.classList.remove("glow");
+        if (opts.autoListen && recognition) {
+          // small delay to avoid race with tts systems
+          setTimeout(() => {
+            try {
+              recognition.start();
+            } catch (e) {
+              console.warn("Auto-start mic failed:", e);
+            }
+          }, 220);
+        }
+      };
+
+      window.speechSynthesis.cancel(); // stop any previous TTS
+      window.speechSynthesis.speak(utter);
+    }
+
+    function speakAndThenListenOnce(text) {
+      // speak and then start recognition once after speech ends
+      speak(text, { autoListen: true });
+    }
+
+    /* ========== Page load: show UI & greet exactly once ========== */
+    window.addEventListener("load", () => {
+      setTimeout(() => {
+        loadingScreen.style.display = "none";
+        mainUI.style.display = "block";
+
+        // greet ONCE and automatically open mic after greeting
+        if (!greetedOnce) {
+          greetedOnce = true;
+          // speak and then automatically start listening
+          speakAndThenListenOnce("How may I help you, sir?");
+        }
+      }, 900); // short delay; adjust if you want longer loading
+    });
+
+    /* ========== Recognition lifecycle handlers ========== */
+    if (recognition) {
+      recognition.onstart = () => {
+        currentlyListening = true;
+        micZone.classList.add("listening");
+        micBtn.classList.add("listening");
+        transcriptDiv.textContent = "Listening...";
+        // clear previous assistant text while listening
+        // (do not clear responseDiv, we want to keep last reply visible)
+      };
+
+      recognition.onend = () => {
+        currentlyListening = false;
+        micZone.classList.remove("listening");
+        micBtn.classList.remove("listening");
+        // recognition may stop automatically; user can tap to start again
+      };
+
+      recognition.onerror = (event) => {
+        currentlyListening = false;
+        micZone.classList.remove("listening");
+        micBtn.classList.remove("listening");
+        console.warn("Recognition error:", event.error);
+        transcriptDiv.textContent = "Error: " + event.error;
+      };
+
+      recognition.onresult = async (event) => {
+        const textRaw = event.results[0][0].transcript || "";
+        const text = textRaw.toLowerCase().trim();
+        transcriptDiv.textContent = "You said: " + text;
+
+        // quick local commands (fast, no backend)
+        // creator
+        if (text.includes("who made you") || text.includes("creator")) {
+          const msg = "I was created by Shubham Jaju.";
+          responseDiv.textContent = msg;
+          speak(msg);
+          return;
+        }
+
+        // app opening shortcuts (browser fallback)
+        if (text.includes("open instagram")) {
+          speak("Opening Instagram.");
+          window.open("https://instagram.com", "_blank");
+          return;
+        }
+        if (text.includes("open whatsapp")) {
+          speak("Opening WhatsApp Web.");
+          window.open("https://web.whatsapp.com", "_blank");
+          return;
+        }
+        if (text.includes("open youtube")) {
+          speak("Opening YouTube.");
+          window.open("https://youtube.com", "_blank");
+          return;
+        }
+        if (text.includes("open discord")) {
+          speak("Opening Discord.");
+          window.open("https://discord.com/app", "_blank");
+          return;
+        }
+        if (text.includes("open twitter") || text.includes("open x")) {
+          speak("Opening X.");
+          window.open("https://x.com", "_blank");
+          return;
+        }
+        if (text.startsWith("search for ")) {
+          const q = text.replace(/^search for\s*/i, "").trim();
+          speak("Searching " + q);
+          window.open("https://www.google.com/search?q=" + encodeURIComponent(q), "_blank");
+          return;
+        }
+        if (text.startsWith("play ")) {
+          const q = text.replace(/^play\s*/i, "").trim();
+          speak("Playing " + q + " on YouTube.");
+          window.open("https://www.youtube.com/results?search_query=" + encodeURIComponent(q), "_blank");
+          return;
+        }
+
+        // send to backend for anything else (smart behavior handled server-side)
+        try {
+          const res = await fetch("/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text })
+          });
+
+          if (!res.ok) throw new Error("Network response was not ok");
+
+          const data = await res.json();
+          // backend returns sanitized reply and follow_up flag
+          let reply = (data.reply || "").toString();
+          reply = sanitizeForSpeech(reply);
+          responseDiv.textContent = reply || "";
+
+          // if backend asks a follow-up (follow_up true) we auto-start the mic after TTS
+          const shouldAutoListen = !!data.follow_up;
+
+          // speak and optionally auto-listen
+          speak(reply || ""); // speak will remove markdown client-side too
+          if (shouldAutoListen) {
+            // after TTS ends, start recognition again
+            // speak() has auto-listen only if we passed option; here we call recognition.start in onend
+            // we add a small timeout to avoid race conditions
+            const onEnd = () => {
+              try {
+                recognition.start();
+              } catch (e) {
+                console.warn("Auto-start failed:", e);
+              }
+            };
+            // attach a one-time start after TTS finishes
+            // Use setTimeout with safe margin (TTS end triggers but we add fallback)
+            setTimeout(() => {
+              try { recognition.start(); } catch (e) { /* ignore */ }
+            }, 600);
+          }
+
+        } catch (err) {
+          console.error("Backend error:", err);
+          const errMsg = "Something went wrong.";
+          responseDiv.textContent = errMsg;
+          speak(errMsg);
+        }
+      }; // end onresult
+    } // end if recognition
+
+    /* ========== mic button behavior:
+         - if currently listening -> stop
+         - otherwise start listening (no greeting if already greeted on load)
+       ========== */
+    micBtn.addEventListener("click", () => {
+      if (!recognition) {
+        alert("Speech Recognition not available in this browser.");
+        return;
+      }
+
+      if (currentlyListening) {
+        try {
+          recognition.stop();
+        } catch (e) {
+          console.warn("stop failed:", e);
+        }
+        return;
+      }
+
+      // If user taps for the first time and page already greeted (greetedOnce true),
+      // we just start recognition without repeating greeting.
+      try {
+        recognition.start();
+        userInitiated = true;
+      } catch (e) {
+        console.warn("start failed:", e);
+      }
+    });
+
+    /* ========== small utility: allow keyboard 'm' to toggle mic (dev convenience) ========== */
+    window.addEventListener("keydown", (ev) => {
+      if (ev.key === "m" || ev.key === "M") {
+        micBtn.click();
+      }
+    });
+  </script>
+</body>
+</html>
