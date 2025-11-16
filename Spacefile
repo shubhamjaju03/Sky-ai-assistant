@@ -1,0 +1,6 @@
+[env]
+python = "3.11"
+
+[run]
+build = "pip install -r requirements.txt"
+start = "python main.py"
