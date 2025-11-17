@@ -6,7 +6,7 @@
   <link rel="icon" type="image/jpeg" href="/static/ai1234.jpg" />
   <title>Shubham's Voice Assistant</title>
 
-  <!-- external CSS (keeps UI unchanged) -->
+  <!-- KEEP YOUR CSS FILE UNCHANGED -->
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 
@@ -20,7 +20,7 @@
   <div id="main-ui" style="display:none;">
     <img id="bg-wallpaper" src="/static/live_wallpaper.gif" alt="wallpaper" />
 
-    <h1 style="text-align:center; color:#00ffcc; margin-top:36px;">
+    <h1>
       Shubham's Voice Assistant
     </h1>
 
@@ -37,21 +37,33 @@
 
       <div id="transcript"></div>
       <div id="response"></div>
+      <div style="text-align:center; color:#9fe; margin-top:8px; font-size:12px;">
+        Wake phrase (one-shot): say "Hey Sky" followed by your command, e.g. "Hey Sky open YouTube".
+      </div>
     </div>
   </div>
 
   <script>
-    /* ========== Helper: sanitize text for speech & display ========== */
+    /*
+      Final integrated JavaScript for:
+      - Mobile + Desktop friendly speech recognition
+      - One-shot wake-word "Hey Sky"
+      - Many local commands (apps, calls, camera, weather, news, cricket, wiki, translate, reminders, media control)
+      - WebView integration API: window.ShubhamVoice & window.__onRecognitionResult
+      - Uses external CSS at /static/style.css (kept unchanged)
+    */
+
+    /* ===========================
+       Helpers
+    ============================*/
     function sanitizeForSpeech(text) {
       if (!text) return "";
-      // remove markdown/symbol characters
       text = text.replace(/[*_`>#\-\[\]\(\)~]/g, "");
-      // collapse whitespace/newlines
       text = text.replace(/\s+/g, " ").trim();
       return text;
     }
 
-    /* ========== UI references ========== */
+    /* UI references */
     const micBtn = document.getElementById("mic-btn");
     const micZone = document.getElementById("mic-zone");
     const transcriptDiv = document.getElementById("transcript");
@@ -59,28 +71,33 @@
     const loadingScreen = document.getElementById("loading-screen");
     const mainUI = document.getElementById("main-ui");
 
-    /* ========== Speech Recognition setup ========== */
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+    /* Configuration (set API keys here if you have them) */
+    const CONFIG = {
+      WEATHER_API_KEY: "", // OpenWeatherMap key (optional)
+      NEWS_API_KEY: "",    // NewsAPI key (optional)
+      CRICKET_API_KEY: "", // any cricket API key (optional)
+      TRANSLATE_API_URL: "https://libretranslate.de/translate", // public instance (use your own in prod)
+      ALLOW_AUTOSTART_AFTER_RESPONSE: true,
+      WAKE_PHRASE: "hey sky"
+    };
 
+    /* Feature detection */
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition || null;
     if (!SpeechRecognition) {
-      alert("Voice recognition requires Chrome or Edge. Some features may not work.");
+      console.warn("SpeechRecognition API not available in this browser.");
     }
 
-    const recognition = SpeechRecognition ? new SpeechRecognition() : null;
-    if (recognition) {
-      recognition.lang = "en-US";
-      recognition.interimResults = false;
-      recognition.continuous = false;
-      recognition.maxAlternatives = 1;
-    }
-
-    /* state flags */
-    let greetedOnce = false;      // greet only once per page load
-    let userInitiated = false;    // user tapped mic at least once
+    /* State */
+    let recognition = null;
+    let greetedOnce = false;
+    let userInitiated = false;
     let currentlyListening = false;
+    let lastStartTimestamp = 0;
+    let restartAttempts = 0;
+    const RESTART_ATTEMPT_LIMIT = 4;
+    const RESTART_COOLDOWN_MS = 3500;
 
-    /* ========== Text-to-speech with optional auto-listen ========== */
+    /* Text-to-speech */
     function speak(text, opts = { autoListen: false }) {
       text = sanitizeForSpeech(text);
       if (!text) return;
@@ -90,16 +107,10 @@
 
       const utter = new SpeechSynthesisUtterance(text);
       utter.lang = "en-US";
-
       utter.onend = () => {
         responseDiv.classList.remove("glow");
-        // auto re-listen only if user has already granted mic via a tap
-        if (opts.autoListen && recognition && userInitiated) {
-          try {
-            recognition.start();
-          } catch (e) {
-            console.warn("Auto-listen failed:", e);
-          }
+        if (opts.autoListen && recognition && userInitiated && CONFIG.ALLOW_AUTOSTART_AFTER_RESPONSE) {
+          tryStartRecognitionWithSafety();
         }
       };
 
@@ -107,242 +118,291 @@
       window.speechSynthesis.speak(utter);
     }
 
-    /* ========== Page load: show UI & greet once (no auto-mic) ========== */
+    /* Page load: show UI and greet once */
     window.addEventListener("load", () => {
       setTimeout(() => {
         loadingScreen.style.display = "none";
         mainUI.style.display = "block";
-
         if (!greetedOnce) {
           greetedOnce = true;
           speak("How may I help you, sir?");
         }
-      }, 900);
+      }, 700);
     });
 
-    /* ========== Helper: universal deep-link opener ========== */
-    function openApp(appLinks, fallbackUrl) {
-      if (!Array.isArray(appLinks) || appLinks.length === 0) {
-        if (fallbackUrl) window.open(fallbackUrl, "_blank");
+    /* Initialize recognition lazily */
+    function initRecognition() {
+      if (!SpeechRecognition) return null;
+      if (recognition) return recognition;
+
+      recognition = new SpeechRecognition();
+      recognition.lang = "en-US";
+      recognition.interimResults = true;
+      recognition.continuous = true;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        currentlyListening = true;
+        lastStartTimestamp = Date.now();
+        micZone.classList.add("listening");
+        micBtn.classList.add("listening");
+        transcriptDiv.textContent = "Listening...";
+        restartAttempts = 0;
+      };
+
+      recognition.onresult = async (event) => {
+        try {
+          let interim = "";
+          let finalTranscript = "";
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const r = event.results[i];
+            if (r.isFinal) finalTranscript += r[0].transcript;
+            else interim += r[0].transcript;
+          }
+          const raw = (finalTranscript || interim || "").trim();
+          if (!raw) return;
+          const textLower = raw.toLowerCase().trim();
+
+          transcriptDiv.textContent = "You said: " + raw;
+
+          // expose to embedding
+          try {
+            if (window.__onRecognitionResult && typeof window.__onRecognitionResult === "function") {
+              window.__onRecognitionResult(raw);
+            }
+          } catch (e) {
+            console.warn("Error calling __onRecognitionResult:", e);
+          }
+
+          // wake-phrase one-shot handling
+          const wake = CONFIG.WAKE_PHRASE.toLowerCase();
+          let handled = false;
+          if (textLower.includes(wake)) {
+            const idx = textLower.lastIndexOf(wake);
+            const after = raw.substring(idx + wake.length).trim();
+            if (after) {
+              await processCommand(after);
+              handled = true;
+            } else {
+              // only wake phrase without immediate command - acknowledge briefly
+              speak("Yes?");
+              handled = true;
+            }
+          }
+
+          // If not handled by wake-word but user started mic, handle full utterance
+          if (!handled && userInitiated) {
+            await processCommand(raw);
+          }
+
+        } catch (err) {
+          console.error("onresult error:", err);
+        }
+      };
+
+      recognition.onerror = (event) => {
+        currentlyListening = false;
+        micZone.classList.remove("listening");
+        micBtn.classList.remove("listening");
+        console.warn("Recognition error:", event.error);
+        if (event.error === "no-speech") {
+          transcriptDiv.textContent = "I did not catch that. Please tap the mic and speak again.";
+        } else if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+          transcriptDiv.textContent = "Microphone permission is blocked. Please allow mic access in browser settings.";
+        } else if (event.error === "network") {
+          transcriptDiv.textContent = "Network error during recognition.";
+        } else {
+          transcriptDiv.textContent = "Error: " + event.error;
+        }
+      };
+
+      recognition.onend = () => {
+        currentlyListening = false;
+        micZone.classList.remove("listening");
+        micBtn.classList.remove("listening");
+        const now = Date.now();
+        if (userInitiated && (now - lastStartTimestamp) > 200 && restartAttempts < RESTART_ATTEMPT_LIMIT) {
+          restartAttempts++;
+          setTimeout(() => {
+            tryStartRecognitionWithSafety();
+          }, RESTART_COOLDOWN_MS);
+        }
+      };
+
+      return recognition;
+    }
+
+    /* Safe start */
+    function tryStartRecognitionWithSafety() {
+      if (!SpeechRecognition) {
+        alert("Speech recognition not supported in this browser. Use Chrome on Android or desktop Chrome for best results.");
         return;
       }
-
-      // try primary deep link
-      window.location.href = appLinks[0];
-
-      // secondary deep link if provided
-      if (appLinks[1]) {
-        setTimeout(() => {
-          window.location.href = appLinks[1];
-        }, 600);
-      }
-
-      // final fallback to browser URL
-      if (fallbackUrl) {
-        setTimeout(() => {
-          window.open(fallbackUrl, "_blank");
-        }, 1200);
+      initRecognition();
+      const now = Date.now();
+      if (currentlyListening) return;
+      if ((now - lastStartTimestamp) < 700) return;
+      try {
+        recognition.start();
+      } catch (e) {
+        console.warn("recognition.start() failed:", e);
+        try { recognition = null; initRecognition(); } catch (err) { console.warn("re-init failed:", err); }
       }
     }
 
-    /* ========== LOCAL COMMAND HANDLER (apps + system) ========== */
-    function handleLocalCommands(text) {
-      // CREATOR
-      if (text.includes("who made you") || text.includes("creator")) {
-        const msg = "I was created by Shubham Jaju.";
-        speak(msg);
-        return true;
+    /* Central command processor */
+    async function processCommand(rawText) {
+      if (!rawText || typeof rawText !== "string") return false;
+      const text = rawText.toLowerCase().trim();
+
+      // battery
+      if (text.includes("battery") || text.includes("battery status") || text.includes("how much battery")) {
+        return batteryStatus();
       }
 
-      /* ---------- APP LAUNCHERS ---------- */
-
-      if (text.includes("open whatsapp")) {
-        speak("Opening WhatsApp.");
-        openApp(
-          ["whatsapp://send", "whatsapp-business://send"],
-          "https://wa.me"
-        );
-        return true;
+      // time
+      if (/\btime\b/.test(text) || text.includes("what time")) {
+        return tellTime();
       }
 
-      if (text.includes("open instagram")) {
-        speak("Opening Instagram.");
-        openApp(
-          ["instagram://app"],
-          "https://instagram.com"
-        );
-        return true;
+      // date
+      if (text.includes("date") || text.includes("today's date") || text.includes("what date")) {
+        return tellDate();
       }
 
+      // vibrate
+      if (text.includes("vibrate") || text.includes("start vibration")) {
+        return vibratePhone(1000);
+      }
+      if (text.includes("stop vibration") || text.includes("stop vibrate")) {
+        return vibratePhone(0);
+      }
+
+      // volume
+      if (text.includes("volume up") || text.includes("increase volume")) {
+        return adjustVolume("up");
+      }
+      if (text.includes("volume down") || text.includes("decrease volume")) {
+        return adjustVolume("down");
+      }
+      if (text.includes("mute") && text.includes("volume")) {
+        return adjustVolume("mute");
+      }
+
+      // brightness guidance
+      if (text.includes("brightness up") || text.includes("increase brightness")) {
+        return changeBrightness("up");
+      }
+      if (text.includes("brightness down") || text.includes("decrease brightness")) {
+        return changeBrightness("down");
+      }
+
+      // quick app openers
       if (text.includes("open youtube")) {
         speak("Opening YouTube.");
-        openApp(
-          ["youtube://", "vnd.youtube://"],
-          "https://youtube.com"
-        );
+        openApp(["youtube://", "vnd.youtube://"], "https://www.youtube.com");
         return true;
       }
-
+      if (text.includes("open whatsapp")) {
+        speak("Opening WhatsApp.");
+        openApp(["whatsapp://send", "whatsapp-business://send"], "https://wa.me");
+        return true;
+      }
+      if (text.includes("open instagram")) {
+        speak("Opening Instagram.");
+        openApp(["instagram://app"], "https://instagram.com");
+        return true;
+      }
       if (text.includes("open facebook")) {
         speak("Opening Facebook.");
-        openApp(
-          ["fb://feed", "fb://profile"],
-          "https://facebook.com"
-        );
+        openApp(["fb://feed", "fb://profile"], "https://facebook.com");
         return true;
       }
-
-      if (text.includes("open messenger")) {
-        speak("Opening Messenger.");
-        openApp(
-          ["fb-messenger://"],
-          "https://m.me"
-        );
-        return true;
-      }
-
-      if (text.includes("open twitter") || text.includes("open x")) {
-        speak("Opening X.");
-        openApp(
-          ["twitter://", "x://"],
-          "https://x.com"
-        );
-        return true;
-      }
-
-      if (text.includes("open snapchat")) {
-        speak("Opening Snapchat.");
-        openApp(
-          ["snapchat://"],
-          "https://snapchat.com"
-        );
-        return true;
-      }
-
       if (text.includes("open telegram")) {
         speak("Opening Telegram.");
-        openApp(
-          ["tg://", "telegram://"],
-          "https://telegram.org"
-        );
+        openApp(["tg://", "telegram://"], "https://telegram.org");
+        return true;
+      }
+      if (text.includes("open linkedin")) {
+        speak("Opening LinkedIn.");
+        openApp(["linkedin://"], "https://www.linkedin.com");
+        return true;
+      }
+      if (text.includes("open zomato")) {
+        speak("Opening Zomato.");
+        openApp([], "https://www.zomato.com");
+        return true;
+      }
+      if (text.includes("open swiggy")) {
+        speak("Opening Swiggy.");
+        openApp([], "https://www.swiggy.com");
+        return true;
+      }
+      if (text.includes("open flipkart")) {
+        speak("Opening Flipkart.");
+        openApp([], "https://www.flipkart.com");
+        return true;
+      }
+      if (text.includes("open amazon")) {
+        speak("Opening Amazon.");
+        openApp([], "https://www.amazon.in");
+        return true;
+      }
+      if (text.includes("open uber")) {
+        speak("Opening Uber.");
+        openApp([], "https://www.uber.com");
+        return true;
+      }
+      if (text.includes("open ola")) {
+        speak("Opening Ola.");
+        openApp([], "https://www.olacabs.com");
         return true;
       }
 
-      if (text.includes("open chrome")) {
-        speak("Opening Chrome.");
-        openApp(
-          ["googlechrome://"],
-          "https://google.com"
-        );
-        return true;
+      // navigation / maps
+      if (text.startsWith("navigate to ") || text.startsWith("take me to ") || text.startsWith("directions to ")) {
+        const place = rawText.replace(/navigate to|take me to|directions to/i, "").trim();
+        if (place) {
+          speak("Navigating to " + place + ".");
+          const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(place)}`;
+          window.open(url, "_blank");
+          return true;
+        }
       }
 
-      if (text.includes("open maps") || text.includes("open google maps")) {
-        speak("Opening Maps.");
-        openApp(
-          ["comgooglemaps://", "maps://"],
-          "https://maps.google.com"
-        );
-        return true;
-      }
-
-      if (text.includes("open gmail")) {
-        speak("Opening Gmail.");
-        openApp(
-          ["googlegmail://"],
-          "https://mail.google.com"
-        );
-        return true;
-      }
-
-      if (text.includes("open spotify")) {
-        speak("Opening Spotify.");
-        openApp(
-          ["spotify://"],
-          "https://open.spotify.com"
-        );
-        return true;
-      }
-
-      if (text.includes("open prime video")) {
-        speak("Opening Prime Video.");
-        openApp(
-          ["primevideo://"],
-          "https://primevideo.com"
-        );
-        return true;
-      }
-
-      if (text.includes("open hotstar")) {
-        speak("Opening Hotstar.");
-        openApp(
-          ["hotstar://"],
-          "https://www.hotstar.com"
-        );
-        return true;
-      }
-
-      if (text.includes("open netflix")) {
-        speak("Opening Netflix.");
-        openApp(
-          ["nflx://"],
-          "https://netflix.com"
-        );
-        return true;
-      }
-
-      if (text.includes("open paytm")) {
-        speak("Opening Paytm.");
-        openApp(
-          ["paytm://"],
-          "https://paytm.com"
-        );
-        return true;
-      }
-
-      if (text.includes("open phonepe") || text.includes("open phone pay")) {
-        speak("Opening PhonePe.");
-        openApp(
-          ["phonepe://"],
-          "https://phonepe.com"
-        );
-        return true;
-      }
-
-      if (text.includes("open jio")) {
-        speak("Opening MyJio.");
-        openApp(
-          ["myjio://"],
-          "https://www.jio.com"
-        );
-        return true;
-      }
-
-      /* ---------- SEARCH & MEDIA ---------- */
-
-      if (text.startsWith("search for ")) {
-        const q = text.replace(/^search for\s*/i, "").trim();
+      // search / play
+      if (text.startsWith("search for ") || text.startsWith("find ")) {
+        const q = rawText.replace(/search for|find/i, "").trim();
         speak("Searching " + q + ".");
-        window.open(
-          "https://www.google.com/search?q=" + encodeURIComponent(q),
-          "_blank"
-        );
+        window.open("https://www.google.com/search?q=" + encodeURIComponent(q), "_blank");
         return true;
       }
-
       if (text.startsWith("play ")) {
-        const q = text.replace(/^play\s*/i, "").trim();
+        const q = rawText.replace(/^play\s*/i, "").trim();
         speak("Playing " + q + " on YouTube.");
-        window.open(
-          "https://www.youtube.com/results?search_query=" + encodeURIComponent(q),
-          "_blank"
-        );
+        window.open("https://www.youtube.com/results?search_query=" + encodeURIComponent(q), "_blank");
         return true;
       }
 
-      /* ---------- SYSTEM / DEVICE COMMANDS ---------- */
+      // call
+      if (text.startsWith("call ")) {
+        const num = rawText.replace(/^call\s*/i, "").trim();
+        if (num) {
+          speak("Calling " + num + ".");
+          window.location.href = `tel:${num}`;
+          return true;
+        }
+      }
 
-      // CAMERA
+      // sms
+      if (text.startsWith("send sms to ")) {
+        const num = rawText.replace(/^send sms to\s*/i, "").trim();
+        speak("Opening messages for " + num + ".");
+        window.location.href = `sms:${num}`;
+        return true;
+      }
+
+      // camera/gallery
       if (text.includes("open camera") || text.includes("start camera")) {
         speak("Opening camera.");
         window.location.href = "camera://";
@@ -351,8 +411,6 @@
         }, 600);
         return true;
       }
-
-      // GALLERY / PHOTOS
       if (text.includes("open gallery") || text.includes("open photos")) {
         speak("Opening gallery.");
         window.location.href = "photos-redirect://";
@@ -362,287 +420,410 @@
         return true;
       }
 
-      // DIALER
-      if (text.includes("open dialer") || text.includes("open phone")) {
-        speak("Opening dialer.");
-        window.location.href = "tel://";
+      // weather
+      if (text.includes("weather") || text.includes("what's the weather") || text.includes("temperature")) {
+        const place = extractPlaceFromText(rawText);
+        await provideWeather(place);
         return true;
       }
 
-      // CALL A NUMBER
-      if (text.startsWith("call ")) {
-        const number = text.replace("call", "").trim();
-        if (number) {
-          speak("Calling " + number + ".");
-          window.location.href = `tel:${number}`;
-        } else {
-          speak("Please say the number clearly.");
+      // news
+      if (text.includes("news") || text.includes("headlines")) {
+        await provideNews();
+        return true;
+      }
+
+      // cricket
+      if (text.includes("cricket") || text.includes("cricket score")) {
+        await provideCricket();
+        return true;
+      }
+
+      // wikipedia
+      if (text.startsWith("who is ") || text.startsWith("what is ") || text.includes("wikipedia")) {
+        const query = rawText.replace(/who is|what is|wikipedia/i, "").trim();
+        if (query) {
+          speak("Searching Wikipedia for " + query);
+          window.open("https://en.wikipedia.org/wiki/" + encodeURIComponent(query), "_blank");
+          return true;
         }
+      }
+
+      // translate
+      if (text.startsWith("translate ") || text.includes("translate to")) {
+        await doTranslate(rawText);
         return true;
       }
 
-      // SMS
-      if (text.startsWith("send sms to ")) {
-        const number = text.replace("send sms to", "").trim();
-        speak("Opening messages.");
-        window.location.href = `sms:${number}`;
+      // reply mode
+      if (text.includes("short mode") || text.includes("short answers")) {
+        localStorage.setItem("replyMode", "short");
+        speak("Short conversation mode enabled.");
+        return true;
+      }
+      if (text.includes("long mode") || text.includes("detailed answers")) {
+        localStorage.setItem("replyMode", "long");
+        speak("Detailed conversation mode enabled.");
         return true;
       }
 
-      // SETTINGS
-      if (text.includes("open settings")) {
-        speak("Opening settings.");
-        window.location.href = "App-Prefs://";
-        setTimeout(() => {
-          window.location.href = "intent://settings#Intent;scheme=android;end";
-        }, 600);
+      // media controls
+      if (text.includes("pause") && text.includes("music")) {
+        return controlMedia("pause");
+      }
+      if ((text.includes("play") && text.includes("music")) || (text.includes("resume") && text.includes("music"))) {
+        return controlMedia("play");
+      }
+      if (text.includes("next song") || text.includes("next track")) {
+        return controlMedia("next");
+      }
+      if (text.includes("previous song") || text.includes("previous track")) {
+        return controlMedia("prev");
+      }
+
+      // reminders
+      if (text.startsWith("remind me to ")) {
+        const payload = rawText.replace(/^remind me to\s*/i, "").trim();
+        scheduleLocalReminder(payload);
         return true;
       }
 
-      // WIFI SETTINGS
-      if (text.includes("open wifi") || text.includes("open wi-fi")) {
-        speak("Opening Wi-Fi settings.");
-        window.location.href = "App-Prefs:root=WIFI";
-        setTimeout(() => {
-          window.location.href = "intent://wifi#Intent;scheme=android;end";
-        }, 600);
-        return true;
-      }
-
-      // BLUETOOTH SETTINGS
-      if (text.includes("open bluetooth")) {
-        speak("Opening Bluetooth settings.");
-        window.location.href = "App-Prefs:root=Bluetooth";
-        setTimeout(() => {
-          window.location.href = "intent://bluetooth#Intent;scheme=android;end";
-        }, 600);
-        return true;
-      }
-
-      // HOTSPOT
-      if (text.includes("open hotspot")) {
-        speak("Opening hotspot settings.");
-        window.location.href = "App-Prefs:root=INTERNET_TETHERING";
-        setTimeout(() => {
-          window.location.href = "intent://tethering#Intent;scheme=android;end";
-        }, 600);
-        return true;
-      }
-
-      // CALCULATOR
-      if (text.includes("open calculator")) {
-        speak("Opening calculator.");
-        window.location.href = "calculator://";
-        setTimeout(() => {
-          window.location.href = "intent://calculator#Intent;scheme=android;end";
-        }, 600);
-        return true;
-      }
-
-      // CLOCK / ALARM
-      if (text.includes("open alarm") || text.includes("open clock")) {
-        speak("Opening clock.");
-        window.location.href = "clock-alarm://";
-        setTimeout(() => {
-          window.location.href = "intent://clock#Intent;scheme=android;end";
-        }, 600);
-        return true;
-      }
-
-      // CALENDAR
-      if (text.includes("open calendar")) {
-        speak("Opening calendar.");
-        window.location.href = "calshow://";
-        setTimeout(() => {
-          window.location.href = "intent://calendar#Intent;scheme=android;end";
-        }, 600);
-        return true;
-      }
-
-      // TORCH / FLASHLIGHT
-      if (text.includes("turn on torch") || text.includes("turn on flashlight")) {
-        speak("Trying to turn on flashlight.");
-        window.location.href = "flashlight://on";
-        setTimeout(() => {
-          window.location.href = "intent://flashlight#Intent;scheme=android;end";
-        }, 600);
-        return true;
-      }
-
-      if (text.includes("turn off torch") || text.includes("turn off flashlight")) {
-        speak("Turning off flashlight.");
-        window.location.href = "flashlight://off";
-        return true;
-      }
-
-      // DOWNLOADS
-      if (text.includes("open downloads") || text.includes("show downloads")) {
-        speak("Opening downloads.");
-        window.location.href = "downloads://";
-        setTimeout(() => {
-          window.location.href = "intent://downloads#Intent;scheme=android;end";
-        }, 600);
-        return true;
-      }
-
-      // FILE MANAGER
-      if (text.includes("open files") || text.includes("open file manager")) {
-        speak("Opening file manager.");
-        window.location.href = "file://";
-        setTimeout(() => {
-          window.location.href = "intent://filemanager#Intent;scheme=android;end";
-        }, 600);
-        return true;
-      }
-
-      // CONTACTS
-      if (text.includes("open contacts") || text.includes("show contacts")) {
-        speak("Opening contacts.");
-        window.location.href = "contacts://";
-        setTimeout(() => {
-          window.location.href = "intent://contacts#Intent;scheme=android;end";
-        }, 600);
-        return true;
-      }
-
-      // NOTIFICATIONS (very limited)
-      if (text.includes("open notifications") || text.includes("show notifications")) {
-        speak("Trying to open notifications.");
-        window.location.href = "intent://notifications#Intent;scheme=android;end";
-        return true;
-      }
-
-      // NAVIGATE TO PLACE
-      if (text.startsWith("navigate to")) {
-        const place = text.replace("navigate to", "").trim();
-        speak("Navigating to " + place + ".");
-        window.location.href = `comgooglemaps://?q=${encodeURIComponent(place)}`;
-        setTimeout(() => {
-          window.location.href =
-            `https://www.google.com/maps?q=${encodeURIComponent(place)}`;
-        }, 600);
-        return true;
-      }
-
-      // PLAY STORE
-      if (text.includes("open play store")) {
-        speak("Opening Play Store.");
-        window.location.href = "market://details?id=";
-        setTimeout(() => {
-          window.location.href = "https://play.google.com/store";
-        }, 600);
-        return true;
-      }
-
-      // TAKE ME HOME
-      if (text.includes("take me home")) {
-        speak("Opening navigation to home.");
-        window.location.href = "comgooglemaps://?daddr=Home";
-        setTimeout(() => {
-          window.location.href =
-            "https://www.google.com/maps/dir/?api=1&destination=home";
-        }, 600);
-        return true;
-      }
-
-      return false; // nothing matched
+      // fallback: send to backend
+      return sendToBackendForReply(rawText);
     }
 
-    /* ========== Recognition lifecycle handlers ========== */
-    if (recognition) {
-      recognition.onstart = () => {
-        currentlyListening = true;
-        micZone.classList.add("listening");
-        micBtn.classList.add("listening");
-        transcriptDiv.textContent = "Listening...";
-      };
-
-      recognition.onend = () => {
-        currentlyListening = false;
-        micZone.classList.remove("listening");
-        micBtn.classList.remove("listening");
-      };
-
-      recognition.onerror = (event) => {
-        currentlyListening = false;
-        micZone.classList.remove("listening");
-        micBtn.classList.remove("listening");
-        console.warn("Recognition error:", event.error);
-
-        if (event.error === "no-speech") {
-          transcriptDiv.textContent = "I did not catch that. Please tap the mic and speak again.";
-        } else if (event.error === "not-allowed") {
-          transcriptDiv.textContent = "Microphone permission is blocked. Please allow mic access in browser settings.";
-        } else {
-          transcriptDiv.textContent = "Error: " + event.error;
-        }
-      };
-
-      recognition.onresult = async (event) => {
-        const textRaw = event.results[0][0].transcript || "";
-        const text = textRaw.toLowerCase().trim();
-        transcriptDiv.textContent = "You said: " + text;
-
-        // 1) try local commands (apps + system)
-        if (handleLocalCommands(text)) {
-          return;
-        }
-
-        // 2) otherwise, send to backend (Gemini / logic there)
-        try {
-          const res = await fetch("/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: text })
-          });
-
-          if (!res.ok) throw new Error("Network response was not ok");
-
-          const data = await res.json();
-          let reply = (data.reply || "").toString();
-          reply = sanitizeForSpeech(reply);
-
-          const shouldAutoListen = !!data.follow_up;
-          speak(reply || "", { autoListen: shouldAutoListen });
-
-        } catch (err) {
-          console.error("Backend error:", err);
-          const errMsg = "Something went wrong.";
-          speak(errMsg);
-        }
-      };
+    /* extract place */
+    function extractPlaceFromText(text) {
+      const m = text.match(/weather (in|for) (.+)/i);
+      if (m && m[2]) return m[2].trim();
+      return "";
     }
 
-    /* ========== Mic button behavior ========== */
-    micBtn.addEventListener("click", () => {
-      if (!recognition) {
-        alert("Speech Recognition not available in this browser.");
-        return;
-      }
-
-      if (currentlyListening) {
-        try {
-          recognition.stop();
-        } catch (e) {
-          console.warn("stop failed:", e);
-        }
-        return;
-      }
-
+    /* battery status */
+    async function batteryStatus() {
       try {
-        recognition.start();
-        userInitiated = true; // user has explicitly allowed mic
+        if (!navigator.getBattery) {
+          speak("Battery API not supported in this browser.");
+          return true;
+        }
+        const b = await navigator.getBattery();
+        const pct = Math.round(b.level * 100);
+        const charging = b.charging ? "and charging" : "and not charging";
+        speak(`Battery is ${pct} percent ${charging}.`);
       } catch (e) {
-        console.warn("start failed:", e);
+        console.warn("Battery API error", e);
+        speak("Unable to read battery status.");
       }
+      return true;
+    }
+
+    /* time & date */
+    function tellTime() {
+      const now = new Date();
+      const hh = now.getHours();
+      const mm = now.getMinutes();
+      const ampm = hh >= 12 ? "PM" : "AM";
+      const displayHour = ((hh + 11) % 12 + 1);
+      speak(`The time is ${displayHour} ${mm === 0 ? "" : mm + " minutes"} ${ampm}.`);
+      return true;
+    }
+
+    function tellDate() {
+      const now = new Date();
+      const date = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+      speak(`Today is ${date}.`);
+      return true;
+    }
+
+    /* vibration */
+    function vibratePhone(durationMs) {
+      if (navigator.vibrate) {
+        if (durationMs > 0) {
+          navigator.vibrate(durationMs);
+          speak("Vibrating for a moment.");
+        } else {
+          navigator.vibrate(0);
+          speak("Vibration stopped.");
+        }
+      } else {
+        speak("Vibration not supported in this device browser.");
+      }
+      return true;
+    }
+
+    /* volume (page-limited) */
+    function adjustVolume(direction) {
+      const media = document.querySelector("video, audio");
+      if (!media) {
+        speak("Cannot change system volume from the browser. I can only adjust media players on the page if present.");
+        return true;
+      }
+      const step = 0.1;
+      if (direction === "up") {
+        media.volume = Math.min(1, media.volume + step);
+        speak("Increased player volume.");
+      } else if (direction === "down") {
+        media.volume = Math.max(0, media.volume - step);
+        speak("Decreased player volume.");
+      } else if (direction === "mute") {
+        media.muted = true;
+        speak("Muted media player.");
+      }
+      return true;
+    }
+
+    /* brightness guidance */
+    function changeBrightness(direction) {
+      if (direction === "up") {
+        speak("I cannot change system brightness from the browser. On Android, swipe down and adjust brightness. On desktop, use your system settings.");
+      } else {
+        speak("I cannot change system brightness from the browser. Please adjust brightness from quick settings.");
+      }
+      return true;
+    }
+
+    /* open app helper */
+    function openApp(appLinks, fallbackUrl) {
+      if (!Array.isArray(appLinks) || appLinks.length === 0) {
+        if (fallbackUrl) window.open(fallbackUrl, "_blank");
+        return;
+      }
+      try {
+        window.location.href = appLinks[0];
+      } catch (e) {
+        console.warn("deep link failed", e);
+      }
+      if (appLinks[1]) {
+        setTimeout(() => {
+          try { window.location.href = appLinks[1]; } catch (e) {}
+        }, 600);
+      }
+      if (fallbackUrl) {
+        setTimeout(() => {
+          window.open(fallbackUrl, "_blank");
+        }, 1200);
+      }
+    }
+
+    /* weather */
+    async function provideWeather(place = "") {
+      try {
+        if (CONFIG.WEATHER_API_KEY) {
+          const q = place || "";
+          const base = "https://api.openweathermap.org/data/2.5/weather";
+          const url = `${base}?q=${encodeURIComponent(q)}&units=metric&appid=${CONFIG.WEATHER_API_KEY}`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error("Weather API response not ok");
+          const j = await res.json();
+          const temp = Math.round(j.main.temp);
+          const desc = j.weather[0].description;
+          speak(`Current weather in ${j.name} is ${desc} with ${temp} degrees Celsius.`);
+          return true;
+        } else {
+          if (place) {
+            window.open(`https://wttr.in/${encodeURIComponent(place)}?m`, "_blank");
+            speak(`Opening weather for ${place}.`);
+          } else {
+            window.open("https://wttr.in/?m", "_blank");
+            speak("Opening weather.");
+          }
+          return true;
+        }
+      } catch (e) {
+        console.error("Weather error", e);
+        speak("Unable to fetch weather right now.");
+        return true;
+      }
+    }
+
+    /* news */
+    async function provideNews() {
+      try {
+        if (CONFIG.NEWS_API_KEY) {
+          const url = `https://newsapi.org/v2/top-headlines?country=in&pageSize=5&apiKey=${CONFIG.NEWS_API_KEY}`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error("News API error");
+          const j = await res.json();
+          const articles = j.articles || [];
+          if (articles.length === 0) {
+            speak("I couldn't find recent headlines.");
+            return true;
+          }
+          const top = articles.slice(0, 3);
+          let speakText = "Here are the top headlines: ";
+          top.forEach((a, i) => {
+            speakText += `Headline ${i + 1}: ${a.title}. `;
+          });
+          speak(speakText);
+          window.open("https://news.google.com/topstories", "_blank");
+          return true;
+        } else {
+          window.open("https://news.google.com/topstories", "_blank");
+          speak("Opening latest news.");
+          return true;
+        }
+      } catch (e) {
+        console.error("News error", e);
+        speak("Unable to fetch news right now.");
+        return true;
+      }
+    }
+
+    /* cricket */
+    async function provideCricket() {
+      try {
+        if (CONFIG.CRICKET_API_KEY) {
+          speak("Fetching cricket scores.");
+          window.open("https://www.espncricinfo.com", "_blank");
+          return true;
+        } else {
+          window.open("https://www.espncricinfo.com", "_blank");
+          speak("Opening cricket scores.");
+          return true;
+        }
+      } catch (e) {
+        console.error("Cricket error", e);
+        speak("Unable to fetch cricket scores.");
+        return true;
+      }
+    }
+
+    /* wiki quick */
+    async function wikiSummary(query) {
+      try {
+        const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("Wikipedia error");
+        const j = await res.json();
+        if (j.extract) speak(j.extract);
+        else speak("I couldn't find an article for that.");
+        return true;
+      } catch (e) {
+        console.error("Wiki error", e);
+        speak("Unable to reach Wikipedia right now.");
+        return true;
+      }
+    }
+
+    /* translate */
+    async function doTranslate(raw) {
+      try {
+        const m = raw.match(/translate\s+(.+?)\s+to\s+([a-zA-Z]+)/i);
+        if (!m) {
+          speak("Please say: translate followed by the phrase and then to language. Example: translate how are you to Hindi.");
+          return true;
+        }
+        const phrase = m[1].replace(/(^['"]|['"]$)/g, "").trim();
+        const lang = m[2].toLowerCase();
+        const langMap = { hindi: "hi", english: "en", spanish: "es", french: "fr" };
+        const target = langMap[lang] || lang.slice(0,2);
+        const data = { q: phrase, source: "auto", target: target, format: "text" };
+        const res = await fetch(CONFIG.TRANSLATE_API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data)
+        });
+        if (!res.ok) throw new Error("Translate API failed");
+        const j = await res.json();
+        const translated = j.translatedText || j.result || "";
+        if (translated) speak(`Translation: ${translated}`);
+        else speak("I could not translate that.");
+      } catch (e) {
+        console.error("Translate error", e);
+        speak("Translation failed. Check your translate API.");
+      }
+      return true;
+    }
+
+    /* media control */
+    function controlMedia(action) {
+      const media = document.querySelector("audio, video");
+      if (!media) {
+        speak("No media player found on this page to control.");
+        return true;
+      }
+      try {
+        if (action === "pause") media.pause();
+        else if (action === "play") media.play();
+        else if (action === "next") speak("Next track requested. Use your media app controls.");
+        else if (action === "prev") speak("Previous track requested.");
+        speak("Media command executed.");
+      } catch (e) {
+        console.warn("Media control error", e);
+        speak("Could not control media.");
+      }
+      return true;
+    }
+
+    /* reminders */
+    function scheduleLocalReminder(text) {
+      if (!text) {
+        speak("Please tell me what to remind you about.");
+        return true;
+      }
+      speak(`Reminder set: ${text}. I will remind you in 10 seconds.`);
+      setTimeout(() => { speak(`Reminder: ${text}`); }, 10000);
+      return true;
+    }
+
+    /* backend fallback */
+    async function sendToBackendForReply(raw) {
+      try {
+        const res = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: raw, replyMode: localStorage.getItem("replyMode") || "short" })
+        });
+        if (!res.ok) throw new Error("Network response was not ok");
+        const data = await res.json();
+        let reply = (data.reply || "").toString();
+        reply = sanitizeForSpeech(reply);
+        const shouldAutoListen = !!data.follow_up;
+        speak(reply || "I have nothing to say.");
+        return true;
+      } catch (err) {
+        console.error("Backend error:", err);
+        speak("Something went wrong connecting to the server.");
+        return true;
+      }
+    }
+
+    /* small utils */
+    function extractNumber(text) {
+      const m = text.match(/\d+/);
+      return m ? parseInt(m[0], 10) : null;
+    }
+
+    /* mic button behavior */
+    micBtn.addEventListener("click", () => {
+      initRecognition();
+      if (currentlyListening && recognition) {
+        try { recognition.stop(); } catch (e) { console.warn("stop failed:", e); }
+        return;
+      }
+      userInitiated = true;
+      restartAttempts = 0;
+      tryStartRecognitionWithSafety();
     });
 
-    /* ========== Dev convenience: press 'm' to toggle mic ========== */
+    /* keyboard shortcut */
     window.addEventListener("keydown", (ev) => {
-      if (ev.key === "m" || ev.key === "M") {
-        micBtn.click();
-      }
+      if (ev.key === "m" || ev.key === "M") micBtn.click();
     });
+
+    /* WebView / integration API */
+    window.ShubhamVoice = {
+      speak: (text) => speak(text || ""),
+      startListening: () => { userInitiated = true; initRecognition(); tryStartRecognitionWithSafety(); },
+      stopListening: () => { if (recognition && currentlyListening) try { recognition.stop(); } catch(e){} },
+      getConfig: () => ({ ...CONFIG }),
+      setConfig: (newConf) => { Object.assign(CONFIG, newConf); localStorage.setItem('assistant_config', JSON.stringify(CONFIG)); }
+    };
+
+    /* fallback message for unsupported browsers */
+    if (!SpeechRecognition) {
+      transcriptDiv.textContent = "Voice recognition not fully supported. Use Chrome (desktop or Android) for best results.";
+    }
   </script>
 </body>
 </html>
