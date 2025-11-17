@@ -6,7 +6,7 @@
   <link rel="icon" type="image/jpeg" href="/static/ai1234.jpg" />
   <title>Shubham's Voice Assistant</title>
 
-  <!-- external CSS (keeps UI unchanged) -->
+  <!-- keep your CSS file unchanged -->
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 
@@ -25,7 +25,7 @@
     </h1>
 
     <div class="mic-zone" id="mic-zone">
-      <!-- Ripple rings kept for visual parity with existing CSS -->
+      <!-- Ripple rings (CSS handles animation) -->
       <div class="ripple-ring ring1"></div>
       <div class="ripple-ring ring2"></div>
       <div class="ripple-ring ring3"></div>
@@ -41,17 +41,18 @@
   </div>
 
   <script>
-    /* ========== Helper: sanitize text (client-side extra safety) ========== */
+    /* ===========================
+       Utilities & UI references
+       =========================== */
+
     function sanitizeForSpeech(text) {
       if (!text) return "";
-      // remove markdown/symbol characters we never want spoken
+      // remove characters we don't want spoken
       text = text.replace(/[*_`>#\-\[\]\(\)~]/g, "");
-      // collapse whitespace/newlines
-      text = text.replace(/\s+/g, " ").trim();
-      return text;
+      // remove extra whitespace/newlines
+      return text.replace(/\s+/g, " ").trim();
     }
 
-    /* ========== UI references ========== */
     const micBtn = document.getElementById("mic-btn");
     const micZone = document.getElementById("mic-zone");
     const transcriptDiv = document.getElementById("transcript");
@@ -59,29 +60,39 @@
     const loadingScreen = document.getElementById("loading-screen");
     const mainUI = document.getElementById("main-ui");
 
-    /* ========== Speech Recognition setup ========== */
+    /* ===========================
+       SpeechRecognition Setup
+       =========================== */
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Voice recognition requires Chrome or Edge. Some features may not work.");
-    }
+    let recognition = null;
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
 
-    const recognition = SpeechRecognition ? new SpeechRecognition() : null;
-    if (recognition) {
+      // Mobile-friendly settings
+      recognition.continuous = true;        // keep streaming so mobile doesn't drop quickly
+      recognition.interimResults = false;   // only final results
+      recognition.maxAlternatives = 5;      // higher alternatives increases chance of correct recognition
       recognition.lang = "en-US";
-      recognition.interimResults = false;
+    } else {
+      // browser doesn't support Web Speech API
+      alert("Voice recognition requires Chrome or Edge for best results. Some features may not work in this browser.");
     }
 
-    /* state flags */
-    let greetedOnce = false;      // greet only once per page load
-    let userInitiated = false;    // user tapped mic at least once
+    /* ===========================
+       State flags
+       =========================== */
+    let greetedOnce = false;       // greet only once per page load
+    let userInitiated = false;     // user tapped mic at least once (permission intent)
     let currentlyListening = false;
 
-    /* ========== TTS with optional auto-listen ========== */
+    /* ===========================
+       Text-to-Speech (sanitized)
+       =========================== */
     function speak(text, opts = { autoListen: false }) {
       text = sanitizeForSpeech(text);
       if (!text) return;
 
-      // show reply text immediately (sanitized)
+      // Show reply text
       responseDiv.textContent = text;
       responseDiv.classList.add("glow");
 
@@ -90,58 +101,271 @@
 
       utter.onend = () => {
         responseDiv.classList.remove("glow");
-        if (opts.autoListen && recognition) {
-          // small delay to avoid race with tts systems
-          setTimeout(() => {
-            try {
-              recognition.start();
-            } catch (e) {
-              console.warn("Auto-start mic failed:", e);
-            }
-          }, 220);
+        // Auto re-listen only if user already tapped mic once (gesture), and opts.autoListen is true
+        if (opts.autoListen && recognition && userInitiated) {
+          try {
+            recognition.start();
+          } catch (e) {
+            console.warn("Auto start after TTS failed:", e);
+          }
         }
       };
 
-      window.speechSynthesis.cancel(); // stop any previous TTS
+      // cancel any running speech and speak
+      window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utter);
     }
 
-    function speakAndThenListenOnce(text) {
-      // speak and then start recognition once after speech ends
-      speak(text, { autoListen: true });
+    /* Quick speak-and-then-listen helper (used for greeting) */
+    function speakAndTryStartListening(text) {
+      // speak and then attempt to start recognition (some browsers allow, some don't)
+      text = sanitizeForSpeech(text);
+      if (!text) return;
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = "en-US";
+      utter.onend = () => {
+        // try to start recognition — wrapped in try/catch to avoid exceptions
+        if (recognition) {
+          try {
+            recognition.start();
+            userInitiated = true; // if start() succeeds, treat as user-initiated
+          } catch (e) {
+            // many mobile browsers block auto-start without user gesture — that's expected
+            console.info("Could not auto-start mic after greeting (browser blocked it).", e);
+          }
+        }
+      };
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utter);
+      responseDiv.textContent = text;
+      responseDiv.classList.add("glow");
     }
 
-    /* ========== Page load: show UI & greet exactly once ========== */
+    /* ===========================
+       Show UI & greet once on load
+       =========================== */
     window.addEventListener("load", () => {
       setTimeout(() => {
         loadingScreen.style.display = "none";
         mainUI.style.display = "block";
 
-        // greet ONCE and automatically open mic after greeting
         if (!greetedOnce) {
           greetedOnce = true;
-          // speak and then automatically start listening
-          speakAndThenListenOnce("How may I help you, sir?");
+          // Greet once. Attempt to auto-start mic (may be blocked on mobile).
+          speakAndTryStartListening("How may I help you, sir?");
         }
-      }, 900); // short delay; adjust if you want longer loading
+      }, 900); // small delay for loading GIF to display
     });
 
-    /* ========== Recognition lifecycle handlers ========== */
+    /* ===========================
+       Universal deep-link opener (mobile apps)
+       - appLinks: array of deep links (try in order)
+       - fallbackUrl: open in browser if deep links fail
+       =========================== */
+    function openApp(appLinks, fallbackUrl) {
+      if (!Array.isArray(appLinks) || appLinks.length === 0) {
+        if (fallbackUrl) window.open(fallbackUrl, "_blank");
+        return;
+      }
+
+      // Try to navigate to primary deep link
+      window.location.href = appLinks[0];
+
+      // Try secondary deep link after short delay (some devices require it)
+      if (appLinks[1]) {
+        setTimeout(() => {
+          window.location.href = appLinks[1];
+        }, 600);
+      }
+
+      // Final fallback to web URL if provided
+      if (fallbackUrl) {
+        setTimeout(() => {
+          window.open(fallbackUrl, "_blank");
+        }, 1200);
+      }
+    }
+
+    /* ===========================
+       Local command handler (fast local actions)
+       returns true if handled locally
+       =========================== */
+    function handleLocalCommands(text) {
+      if (!text) return false;
+      text = text.toLowerCase();
+
+      // Creator
+      if (text.includes("who made you") || text.includes("creator")) {
+        const msg = "I was created by Shubham Jaju.";
+        speak(msg);
+        return true;
+      }
+
+      // APP LAUNCHERS (deep links + browser fallback)
+      if (text.includes("open whatsapp")) {
+        speak("Opening WhatsApp.");
+        openApp(["whatsapp://send", "whatsapp-business://send"], "https://wa.me");
+        return true;
+      }
+      if (text.includes("open instagram")) {
+        speak("Opening Instagram.");
+        openApp(["instagram://app"], "https://instagram.com");
+        return true;
+      }
+      if (text.includes("open youtube")) {
+        speak("Opening YouTube.");
+        openApp(["vnd.youtube://", "youtube://"], "https://youtube.com");
+        return true;
+      }
+      if (text.includes("open discord")) {
+        speak("Opening Discord.");
+        openApp(["discord://"], "https://discord.com/app");
+        return true;
+      }
+      if (text.includes("open twitter") || text.includes("open x")) {
+        speak("Opening X.");
+        openApp(["twitter://", "x://"], "https://x.com");
+        return true;
+      }
+      if (text.includes("open telegram")) {
+        speak("Opening Telegram.");
+        openApp(["tg://", "telegram://"], "https://telegram.org");
+        return true;
+      }
+      if (text.includes("open facebook")) {
+        speak("Opening Facebook.");
+        openApp(["fb://feed", "fb://profile"], "https://facebook.com");
+        return true;
+      }
+      if (text.includes("open gmail")) {
+        speak("Opening Gmail.");
+        openApp(["googlegmail://"], "https://mail.google.com");
+        return true;
+      }
+      if (text.includes("open spotify")) {
+        speak("Opening Spotify.");
+        openApp(["spotify://"], "https://open.spotify.com");
+        return true;
+      }
+      if (text.includes("open maps") || text.includes("open google maps")) {
+        speak("Opening Maps.");
+        openApp(["comgooglemaps://", "maps://"], "https://maps.google.com");
+        return true;
+      }
+      if (text.includes("open chrome")) {
+        speak("Opening Chrome.");
+        openApp(["googlechrome://"], "https://google.com");
+        return true;
+      }
+
+      // Search & Play
+      if (text.startsWith("search for ")) {
+        const q = text.replace(/^search for\s*/i, "").trim();
+        speak("Searching " + q + ".");
+        window.open("https://www.google.com/search?q=" + encodeURIComponent(q), "_blank");
+        return true;
+      }
+      if (text.startsWith("play ")) {
+        const q = text.replace(/^play\s*/i, "").trim();
+        speak("Playing " + q + " on YouTube.");
+        window.open("https://www.youtube.com/results?search_query=" + encodeURIComponent(q), "_blank");
+        return true;
+      }
+
+      // Phone actions
+      if (text.startsWith("call ")) {
+        const number = text.replace(/^call\s*/i, "").trim();
+        if (number) {
+          speak("Calling " + number + ".");
+          window.location.href = "tel:" + number;
+        } else {
+          speak("Please say the number clearly.");
+        }
+        return true;
+      }
+      if (text.startsWith("send sms to ")) {
+        const number = text.replace(/^send sms to\s*/i, "").trim();
+        speak("Opening messages.");
+        window.location.href = "sms:" + number;
+        return true;
+      }
+
+      // System-ish intents (best-effort deep links)
+      if (text.includes("open camera") || text.includes("start camera")) {
+        speak("Opening camera.");
+        openApp(["camera://"], null);
+        return true;
+      }
+      if (text.includes("open gallery") || text.includes("open photos")) {
+        speak("Opening gallery.");
+        openApp(["photos-redirect://", "gallery://"], null);
+        return true;
+      }
+      if (text.includes("open settings")) {
+        speak("Opening settings.");
+        openApp(["App-Prefs://"], null);
+        return true;
+      }
+      if (text.includes("open wifi") || text.includes("open wi-fi")) {
+        speak("Opening Wi-Fi settings.");
+        openApp(["App-Prefs:root=WIFI"], null);
+        return true;
+      }
+      if (text.includes("turn on torch") || text.includes("turn on flashlight")) {
+        speak("Trying to turn on flashlight.");
+        openApp(["flashlight://on"], null);
+        return true;
+      }
+      if (text.includes("open downloads")) {
+        speak("Opening downloads.");
+        openApp(["downloads://"], null);
+        return true;
+      }
+      if (text.includes("open files") || text.includes("open file manager")) {
+        speak("Opening file manager.");
+        openApp(["file://"], null);
+        return true;
+      }
+
+      // Navigation
+      if (text.startsWith("navigate to ")) {
+        const place = text.replace(/^navigate to\s*/i, "").trim();
+        speak("Navigating to " + place + ".");
+        openApp([`comgooglemaps://?q=${encodeURIComponent(place)}`], `https://www.google.com/maps?q=${encodeURIComponent(place)}`);
+        return true;
+      }
+
+      // Fallback: not handled locally
+      return false;
+    }
+
+    /* ===========================
+       Recognition lifecycle handlers
+       =========================== */
     if (recognition) {
       recognition.onstart = () => {
         currentlyListening = true;
         micZone.classList.add("listening");
         micBtn.classList.add("listening");
         transcriptDiv.textContent = "Listening...";
-        // clear previous assistant text while listening
-        // (do not clear responseDiv, we want to keep last reply visible)
       };
 
       recognition.onend = () => {
         currentlyListening = false;
         micZone.classList.remove("listening");
         micBtn.classList.remove("listening");
-        // recognition may stop automatically; user can tap to start again
+
+        // Auto restart if user has previously initiated mic (helps mobile keep listening)
+        if (userInitiated) {
+          setTimeout(() => {
+            try {
+              recognition.start();
+            } catch (e) {
+              // some browsers block auto-start; that's expected
+              console.info("Recognition auto-restart blocked or failed:", e);
+            }
+          }, 180);
+        }
       };
 
       recognition.onerror = (event) => {
@@ -149,63 +373,39 @@
         micZone.classList.remove("listening");
         micBtn.classList.remove("listening");
         console.warn("Recognition error:", event.error);
-        transcriptDiv.textContent = "Error: " + event.error;
+
+        if (event.error === "no-speech") {
+          transcriptDiv.textContent = "I did not catch that. Please tap the mic and speak again.";
+        } else if (event.error === "not-allowed" || event.error === "security") {
+          transcriptDiv.textContent = "Microphone permission is blocked. Please allow mic access in browser settings.";
+        } else if (event.error === "network") {
+          transcriptDiv.textContent = "Network issue. Please check your connection.";
+        } else {
+          transcriptDiv.textContent = "Error: " + event.error;
+        }
+
+        // Attempt quick restart for common transient errors
+        if (["no-speech", "audio-capture", "network"].includes(event.error)) {
+          setTimeout(() => {
+            try {
+              recognition.start();
+              userInitiated = true;
+            } catch (e) { /* ignore */ }
+          }, 250);
+        }
       };
 
       recognition.onresult = async (event) => {
-        const textRaw = event.results[0][0].transcript || "";
+        // get the last result's best alternative
+        const last = event.results[event.results.length - 1];
+        const textRaw = (last && last[0] && last[0].transcript) || "";
         const text = textRaw.toLowerCase().trim();
         transcriptDiv.textContent = "You said: " + text;
 
-        // quick local commands (fast, no backend)
-        // creator
-        if (text.includes("who made you") || text.includes("creator")) {
-          const msg = "I was created by Shubham Jaju.";
-          responseDiv.textContent = msg;
-          speak(msg);
-          return;
-        }
+        // 1) Try local fast commands
+        if (handleLocalCommands(text)) return;
 
-        // app opening shortcuts (browser fallback)
-        if (text.includes("open instagram")) {
-          speak("Opening Instagram.");
-          window.open("https://instagram.com", "_blank");
-          return;
-        }
-        if (text.includes("open whatsapp")) {
-          speak("Opening WhatsApp Web.");
-          window.open("https://web.whatsapp.com", "_blank");
-          return;
-        }
-        if (text.includes("open youtube")) {
-          speak("Opening YouTube.");
-          window.open("https://youtube.com", "_blank");
-          return;
-        }
-        if (text.includes("open discord")) {
-          speak("Opening Discord.");
-          window.open("https://discord.com/app", "_blank");
-          return;
-        }
-        if (text.includes("open twitter") || text.includes("open x")) {
-          speak("Opening X.");
-          window.open("https://x.com", "_blank");
-          return;
-        }
-        if (text.startsWith("search for ")) {
-          const q = text.replace(/^search for\s*/i, "").trim();
-          speak("Searching " + q);
-          window.open("https://www.google.com/search?q=" + encodeURIComponent(q), "_blank");
-          return;
-        }
-        if (text.startsWith("play ")) {
-          const q = text.replace(/^play\s*/i, "").trim();
-          speak("Playing " + q + " on YouTube.");
-          window.open("https://www.youtube.com/results?search_query=" + encodeURIComponent(q), "_blank");
-          return;
-        }
-
-        // send to backend for anything else (smart behavior handled server-side)
+        // 2) If not local, send to backend for processing
         try {
           const res = await fetch("/chat", {
             method: "POST",
@@ -216,47 +416,28 @@
           if (!res.ok) throw new Error("Network response was not ok");
 
           const data = await res.json();
-          // backend returns sanitized reply and follow_up flag
           let reply = (data.reply || "").toString();
           reply = sanitizeForSpeech(reply);
-          responseDiv.textContent = reply || "";
+          responseDiv.textContent = reply;
 
-          // if backend asks a follow-up (follow_up true) we auto-start the mic after TTS
+          // If backend signals it wants a follow-up (e.g., asked "Which city?"), the backend
+          // may include follow_up: true to indicate auto-listen should start again after TTS.
           const shouldAutoListen = !!data.follow_up;
 
-          // speak and optionally auto-listen
-          speak(reply || ""); // speak will remove markdown client-side too
-          if (shouldAutoListen) {
-            // after TTS ends, start recognition again
-            // speak() has auto-listen only if we passed option; here we call recognition.start in onend
-            // we add a small timeout to avoid race conditions
-            const onEnd = () => {
-              try {
-                recognition.start();
-              } catch (e) {
-                console.warn("Auto-start failed:", e);
-              }
-            };
-            // attach a one-time start after TTS finishes
-            // Use setTimeout with safe margin (TTS end triggers but we add fallback)
-            setTimeout(() => {
-              try { recognition.start(); } catch (e) { /* ignore */ }
-            }, 600);
-          }
+          speak(reply, { autoListen: shouldAutoListen });
 
         } catch (err) {
           console.error("Backend error:", err);
-          const errMsg = "Something went wrong.";
-          responseDiv.textContent = errMsg;
-          speak(errMsg);
+          speak("Something went wrong.");
         }
-      }; // end onresult
-    } // end if recognition
+      };
+    }
 
-    /* ========== mic button behavior:
-         - if currently listening -> stop
-         - otherwise start listening (no greeting if already greeted on load)
-       ========== */
+    /* ===========================
+       Mic button behavior
+       - tap to start/stop listening
+       - first user tap sets userInitiated (gesture for mobile)
+       =========================== */
     micBtn.addEventListener("click", () => {
       if (!recognition) {
         alert("Speech Recognition not available in this browser.");
@@ -272,21 +453,18 @@
         return;
       }
 
-      // If user taps for the first time and page already greeted (greetedOnce true),
-      // we just start recognition without repeating greeting.
       try {
         recognition.start();
         userInitiated = true;
       } catch (e) {
         console.warn("start failed:", e);
+        // on some mobile browsers start() must be called inside a user gesture; we are inside click so it should work
       }
     });
 
-    /* ========== small utility: allow keyboard 'm' to toggle mic (dev convenience) ========== */
+    /* keyboard convenience for development: press 'm' to toggle mic */
     window.addEventListener("keydown", (ev) => {
-      if (ev.key === "m" || ev.key === "M") {
-        micBtn.click();
-      }
+      if (ev.key === "m" || ev.key === "M") micBtn.click();
     });
   </script>
 </body>
