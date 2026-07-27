@@ -1,0 +1,18 @@
+{
+  "name": "Sky AI — Private Assistant",
+  "short_name": "Sky AI",
+  "description": "A free-first personal AI assistant that runs on your device.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080a10",
+  "theme_color": "#090b11",
+  "orientation": "any",
+  "categories": ["productivity", "utilities"],
+  "shortcuts": [
+    {
+      "name": "New conversation",
+      "short_name": "New chat",
+      "url": "/?new=1"
+    }
+  ]
+}
