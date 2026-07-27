@@ -627,6 +627,65 @@ textarea:focus-visible {
   background: linear-gradient(140deg, rgba(119, 98, 226, 0.17), rgba(77, 63, 156, 0.12));
 }
 
+.web-sources {
+  margin-top: 9px;
+  padding: 11px;
+  border: 1px solid rgba(89, 224, 173, 0.14);
+  border-radius: 13px;
+  background: rgba(89, 224, 173, 0.035);
+}
+
+.web-sources-label {
+  display: block;
+  margin: 0 0 8px;
+  color: #82d9ba;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.13em;
+}
+
+.web-source-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.web-source-grid a {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 10px;
+  color: #cdd4e4;
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.025);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.web-source-grid a:hover {
+  border-color: rgba(89, 224, 173, 0.25);
+  background: rgba(89, 224, 173, 0.055);
+}
+
+.web-source-grid strong,
+.web-source-grid span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-source-grid strong {
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.web-source-grid span {
+  margin-top: 3px;
+  color: #6f7b8c;
+  font-size: 9px;
+}
+
 .typing-dots {
   display: inline-flex;
   gap: 5px;
@@ -928,6 +987,10 @@ textarea:focus-visible {
   }
 
   .quick-prompts {
+    grid-template-columns: 1fr;
+  }
+
+  .web-source-grid {
     grid-template-columns: 1fr;
   }
 
