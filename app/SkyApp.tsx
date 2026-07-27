@@ -2,7 +2,7 @@
 
 import type { ChangeEvent, FormEvent, KeyboardEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { WebWorkerMLCEngine } from "@mlc-ai/web-llm";
+import type { MLCEngine } from "@mlc-ai/web-llm";
 
 type Role = "assistant" | "user";
 
@@ -130,7 +130,7 @@ export function SkyApp() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const [memoryCount, setMemoryCount] = useState(0);
-  const engineRef = useRef<WebWorkerMLCEngine | null>(null);
+  const engineRef = useRef<MLCEngine | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -175,11 +175,7 @@ export function SkyApp() {
     setProgressText(`Preparing private AI — ${MODEL_NOTE}`);
     try {
       const webllm = await import("@mlc-ai/web-llm");
-      const worker = new Worker(new URL("./sky.worker.ts", import.meta.url), {
-        type: "module",
-      });
-      const engine = await webllm.CreateWebWorkerMLCEngine(
-        worker,
+      const engine = await webllm.CreateMLCEngine(
         MODEL_ID,
         {
           initProgressCallback: (report) => {
