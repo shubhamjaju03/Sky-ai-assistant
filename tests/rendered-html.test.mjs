@@ -41,6 +41,8 @@ test("server-renders the Sky AI application shell", async () => {
   assert.match(html, /Encrypted backup/);
   assert.doesNotMatch(html, /Preparing your private AI|Loading Free AI|Enable Free AI/);
   assert.match(html, /manifest\.webmanifest/);
+  assert.match(html, /favicon-v2\.png/);
+  assert.match(html, /class="message-avatar"/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
 

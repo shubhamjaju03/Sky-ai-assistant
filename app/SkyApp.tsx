@@ -896,9 +896,7 @@ export function SkyApp() {
 
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
         <div className="brand-row">
-          <span className="brand-mark" aria-hidden="true">
-            S
-          </span>
+          <span className="brand-mark" aria-hidden="true" />
           <div>
             <strong>Sky</strong>
             <span>Personal intelligence</span>
@@ -1016,7 +1014,7 @@ export function SkyApp() {
                   className={`message-row ${message.role}`}
                 >
                   {message.role === "assistant" && (
-                    <span className="message-avatar">S</span>
+                    <span className="message-avatar" aria-hidden="true" />
                   )}
                   <div className="message-bubble">
                     <div className="message-name">

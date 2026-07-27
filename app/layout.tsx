@@ -28,8 +28,9 @@ export async function generateMetadata(): Promise<Metadata> {
     applicationName: "Sky AI",
     manifest: "/manifest.webmanifest",
     icons: {
-      icon: "/favicon.svg",
-      shortcut: "/favicon.svg",
+      icon: [{ url: "/favicon-v2.png", type: "image/png", sizes: "64x64" }],
+      shortcut: "/favicon-v2.png",
+      apple: "/sky-icon-192.png",
     },
     openGraph: {
       title,

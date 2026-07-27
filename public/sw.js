@@ -1,5 +1,12 @@
-const CACHE_NAME = "sky-ai-shell-v4";
-const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.svg"];
+const CACHE_NAME = "sky-ai-shell-v5";
+const APP_SHELL = [
+  "/",
+  "/manifest.webmanifest",
+  "/favicon-v2.png",
+  "/sky-avatar-v2.png",
+  "/sky-icon-192.png",
+  "/sky-icon-512.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));

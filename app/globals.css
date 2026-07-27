@@ -109,11 +109,13 @@ textarea:focus-visible {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  color: white;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.23), transparent 45%),
-    linear-gradient(145deg, #a997ff, #6351df);
-  box-shadow: 0 10px 30px rgba(101, 82, 219, 0.26);
+  overflow: hidden;
+  border: 1px solid rgba(157, 181, 255, 0.3);
+  color: transparent;
+  background: #050822 url("/sky-avatar-v2.png") center / cover no-repeat;
+  box-shadow:
+    0 10px 30px rgba(78, 77, 224, 0.3),
+    inset 0 0 14px rgba(255, 255, 255, 0.1);
 }
 
 .brand-mark {
@@ -588,9 +590,10 @@ textarea:focus-visible {
 .message-avatar {
   width: 30px;
   height: 30px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 750;
+  border-radius: 50%;
+  box-shadow:
+    0 7px 24px rgba(58, 109, 255, 0.32),
+    0 0 0 2px rgba(126, 106, 255, 0.08);
 }
 
 .message-bubble {
