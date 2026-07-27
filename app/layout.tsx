@@ -18,9 +18,9 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = incoming.get("host") ?? "localhost:3000";
   const protocol = host.startsWith("localhost") ? "http" : "https";
   const origin = `${protocol}://${host}`;
-  const title = "Sky AI — Private AI on your device";
+  const title = "Sky AI — Your Free Multimodal Personal Agent";
   const description =
-    "A free-first personal AI assistant with local conversations, memory, voice, notes, and installable apps.";
+    "A free-first online AI agent with live research, images and PDFs, private knowledge, reminders, voice, encrypted transfer, and installable web and Android apps.";
 
   return {
     title,
@@ -35,13 +35,13 @@ export async function generateMetadata(): Promise<Metadata> {
       title,
       description,
       type: "website",
-      images: [{ url: `${origin}/og.png`, width: 1680, height: 941 }],
+      images: [{ url: `${origin}/og-v2.png`, width: 1680, height: 941 }],
     },
     twitter: {
       card: "summary_large_image",
       title,
       description,
-      images: [`${origin}/og.png`],
+      images: [`${origin}/og-v2.png`],
     },
   };
 }

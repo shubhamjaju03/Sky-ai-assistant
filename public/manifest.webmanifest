@@ -1,18 +1,40 @@
 {
-  "name": "Sky AI — Private Assistant",
+  "name": "Sky AI — Multimodal Personal Agent",
   "short_name": "Sky AI",
-  "description": "A free-first personal AI assistant that runs on your device.",
+  "description": "A free-first multimodal AI agent with live research, reminders, voice, files, and private knowledge.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#080a10",
   "theme_color": "#090b11",
   "orientation": "any",
   "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
   "shortcuts": [
     {
       "name": "New conversation",
       "short_name": "New chat",
       "url": "/?new=1"
+    },
+    {
+      "name": "Set a reminder",
+      "short_name": "Reminder",
+      "url": "/?prompt=Set%20a%20reminder"
     }
-  ]
+  ],
+  "share_target": {
+    "action": "/",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  }
 }

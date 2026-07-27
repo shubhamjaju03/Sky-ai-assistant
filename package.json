@@ -19,6 +19,7 @@
     "@capacitor/android": "^8.4.2",
     "@capacitor/cli": "^8.4.2",
     "@capacitor/core": "^8.4.2",
+    "@capacitor/local-notifications": "^8.2.1",
     "next": "16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6"

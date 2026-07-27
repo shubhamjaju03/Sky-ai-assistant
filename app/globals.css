@@ -93,6 +93,7 @@ textarea:focus-visible {
   background: rgba(11, 13, 20, 0.94);
   border-right: 1px solid var(--line);
   backdrop-filter: blur(22px);
+  overflow-y: auto;
 }
 
 .brand-row {
@@ -317,8 +318,9 @@ textarea:focus-visible {
 }
 
 .memory-row {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
   margin-top: 8px;
   padding: 12px 8px 0;
   border-top: 1px solid var(--line);
@@ -684,6 +686,11 @@ textarea:focus-visible {
   margin-top: 3px;
   color: #6f7b8c;
   font-size: 9px;
+  text-align: center;
+}
+
+.memory-row span + span {
+  border-left: 1px solid var(--line);
 }
 
 .typing-dots {
@@ -772,6 +779,17 @@ textarea:focus-visible {
   color: #70788c;
   background: transparent;
   cursor: pointer;
+}
+
+.message-attachment {
+  display: inline-flex;
+  margin: 2px 0 7px;
+  padding: 5px 8px;
+  border: 1px solid rgba(147, 128, 245, 0.18);
+  border-radius: 8px;
+  color: #a9afbf;
+  font-size: 10px;
+  background: rgba(130, 108, 236, 0.06);
 }
 
 .composer {
@@ -874,6 +892,15 @@ textarea:focus-visible {
 
 .composer-meta button:hover {
   color: #aaa1e0;
+}
+
+.composer-meta > div {
+  display: flex;
+  gap: 12px;
+}
+
+.composer-meta button.active-text {
+  color: #9ce7c8;
 }
 
 .sidebar-scrim {

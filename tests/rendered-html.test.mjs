@@ -37,6 +37,8 @@ test("server-renders the Sky AI application shell", async () => {
   assert.match(html, /READY INSTANTLY/);
   assert.match(html, />ONLINE</);
   assert.match(html, /No model download/);
+  assert.match(html, /Images · PDFs · voice · reminders · private knowledge/);
+  assert.match(html, /Encrypted backup/);
   assert.doesNotMatch(html, /Preparing your private AI|Loading Free AI|Enable Free AI/);
   assert.match(html, /manifest\.webmanifest/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
@@ -198,6 +200,121 @@ test("chat endpoint returns only explicitly requested, validated task actions", 
         type: "create_text_file",
         filename: "_sky-note.txt",
         content: "TASK_READY",
+      },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("chat endpoint passes validated multimodal files and private knowledge to Gemini", async () => {
+  const worker = await loadWorker("multimodal");
+  const originalFetch = globalThis.fetch;
+  let providerBody;
+  globalThis.fetch = async (_input, init) => {
+    providerBody = JSON.parse(String(init?.body));
+    return Response.json({
+      candidates: [{ content: { parts: [{ text: "I can see the attachment." }] } }],
+    });
+  };
+
+  try {
+    const response = await worker.fetch(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: "Analyze this image" }],
+          knowledge: ["project-notes.txt\nSky is a personal assistant."],
+          attachment: {
+            name: "photo.png",
+            mimeType: "image/png",
+            data: "aGVsbG8=",
+          },
+        }),
+      }),
+      {
+        ASSETS: {
+          fetch: async () => new Response("Not found", { status: 404 }),
+        },
+        GEMINI_API_KEY: "test-server-key",
+      },
+      {
+        waitUntil() {},
+        passThroughOnException() {},
+      },
+    );
+    const payload = await response.json();
+    const parts = providerBody.contents[0].parts;
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.answer, "I can see the attachment.");
+    assert.match(parts[0].text, /project-notes\.txt/);
+    assert.deepEqual(parts[1].inlineData, {
+      mimeType: "image/png",
+      data: "aGVsbG8=",
+    });
+    assert.match(parts[2].text, /photo\.png/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("chat endpoint validates reminder dates before returning an action", async () => {
+  const worker = await loadWorker("reminder");
+  const originalFetch = globalThis.fetch;
+  const dueAt = new Date(Date.now() + 86_400_000).toISOString();
+  globalThis.fetch = async () =>
+    Response.json({
+      candidates: [
+        {
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  name: "create_reminder",
+                  args: { title: "Submit the assignment", dueAt },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+  try {
+    const response = await worker.fetch(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            {
+              role: "user",
+              content: "Remind me tomorrow to submit the assignment",
+            },
+          ],
+        }),
+      }),
+      {
+        ASSETS: {
+          fetch: async () => new Response("Not found", { status: 404 }),
+        },
+        GEMINI_API_KEY: "test-server-key",
+      },
+      {
+        waitUntil() {},
+        passThroughOnException() {},
+      },
+    );
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(payload.actions, [
+      {
+        type: "create_reminder",
+        title: "Submit the assignment",
+        dueAt,
       },
     ]);
   } finally {
