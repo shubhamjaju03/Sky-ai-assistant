@@ -39,9 +39,9 @@ type AssistantAction =
   | { type: "copy_text"; text: string }
   | { type: "compose_email"; to?: string; subject: string; body: string };
 
-const GEMINI_MODEL = "gemini-3.5-flash-lite";
-const GEMINI_INTERACTIONS_URL =
-  "https://generativelanguage.googleapis.com/v1beta/interactions";
+const GEMINI_MODEL = "gemini-3.1-flash-lite";
+const GEMINI_GENERATE_URL =
+  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 const ACTION_TOOLS = [
   {
@@ -235,23 +235,33 @@ function validateAction(
   return null;
 }
 
-function parseGeminiInteraction(payload: unknown, latestPrompt: string) {
-  const steps =
-    isRecord(payload) && Array.isArray(payload.steps) ? payload.steps : [];
-  const answer = steps
-    .filter((step) => isRecord(step) && step.type === "model_output")
-    .flatMap((step) => (isRecord(step) && Array.isArray(step.content) ? step.content : []))
-    .filter((content) => isRecord(content) && content.type === "text")
-    .map((content) => (isRecord(content) ? cleanString(content.text, 30_000) : ""))
+function wantsTaskAction(prompt: string) {
+  return (
+    /\b(open|visit|go\s+to|launch|navigate)\b/i.test(prompt) ||
+    /\b(create|make|save|download|export)\b[\s\S]{0,80}\b(file|note|text|document)\b/i.test(
+      prompt,
+    ) ||
+    /\bcopy\b/i.test(prompt) ||
+    /\b(compose|draft|write|open)\b[\s\S]{0,60}\b(e-?mail|mail)\b/i.test(prompt)
+  );
+}
+
+function parseGeminiResponse(payload: unknown, latestPrompt: string) {
+  const candidates =
+    isRecord(payload) && Array.isArray(payload.candidates) ? payload.candidates : [];
+  const parts = candidates.flatMap((candidate) => {
+    if (!isRecord(candidate) || !isRecord(candidate.content)) return [];
+    return Array.isArray(candidate.content.parts) ? candidate.content.parts : [];
+  });
+  const answer = parts
+    .filter((part) => isRecord(part) && typeof part.text === "string")
+    .map((part) => (isRecord(part) ? cleanString(part.text, 30_000) : ""))
     .filter(Boolean)
     .join("\n\n");
-  const actions = steps
-    .filter((step) => isRecord(step) && step.type === "function_call")
-    .map((step) =>
-      isRecord(step)
-        ? validateAction(step.name, step.arguments, latestPrompt)
-        : null,
-    )
+  const actions = parts
+    .map((part) => (isRecord(part) && isRecord(part.functionCall) ? part.functionCall : null))
+    .filter((call): call is Record<string, unknown> => Boolean(call))
+    .map((call) => validateAction(call.name, call.args, latestPrompt))
     .filter((action): action is AssistantAction => Boolean(action))
     .slice(0, 3);
   return { answer, actions };
@@ -342,21 +352,47 @@ Do not claim access to accounts, private data, operating-system controls, or per
 
   let geminiResponse: Response;
   try {
-    geminiResponse = await fetch(GEMINI_INTERACTIONS_URL, {
+    geminiResponse = await fetch(GEMINI_GENERATE_URL, {
       method: "POST",
       headers: {
-        "Api-Revision": "2026-05-20",
         "Content-Type": "application/json",
         "x-goog-api-key": env.GEMINI_API_KEY,
       },
       body: JSON.stringify({
-        model: GEMINI_MODEL,
-        store: false,
-        system_instruction: systemInstruction,
-        input: `On-device memories:\n${memoryContext}\n\nLive web sources:\n${sourceContext}\n\nConversation:\n${transcript}`,
-        tools: ACTION_TOOLS,
+        systemInstruction: {
+          parts: [{ text: systemInstruction }],
+        },
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: `On-device memories:\n${memoryContext}\n\nLive web sources:\n${sourceContext}\n\nConversation:\n${transcript}`,
+              },
+            ],
+          },
+        ],
+        ...(wantsTaskAction(latestPrompt)
+          ? {
+              tools: [
+                {
+                  functionDeclarations: ACTION_TOOLS.map(
+                    ({ name, description, parameters }) => ({
+                      name,
+                      description,
+                      parameters,
+                    }),
+                  ),
+                },
+              ],
+            }
+          : {}),
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 1_200,
+        },
       }),
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(30_000),
     });
   } catch (error) {
     console.error("Online AI request failed", error);
@@ -381,7 +417,7 @@ Do not claim access to accounts, private data, operating-system controls, or per
     );
   }
 
-  const parsed = parseGeminiInteraction(await geminiResponse.json(), latestPrompt);
+  const parsed = parseGeminiResponse(await geminiResponse.json(), latestPrompt);
   const fallback = parsed.actions.length
     ? "I prepared the action you requested."
     : "I couldn’t form a reply. Please rephrase your request.";

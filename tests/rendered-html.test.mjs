@@ -95,11 +95,9 @@ test("chat endpoint keeps the Gemini key server-side and returns an online reply
     providerUrl = String(input);
     providerKey = new Headers(init?.headers).get("x-goog-api-key") ?? "";
     return Response.json({
-      status: "completed",
-      steps: [
+      candidates: [
         {
-          type: "model_output",
-          content: [{ type: "text", text: "Online reply" }],
+          content: { parts: [{ text: "Online reply" }] },
         },
       ],
     });
@@ -130,10 +128,13 @@ test("chat endpoint keeps the Gemini key server-side and returns an online reply
     const payload = await response.json();
 
     assert.equal(response.status, 200);
-    assert.match(providerUrl, /generativelanguage\.googleapis\.com\/v1beta\/interactions/);
+    assert.match(
+      providerUrl,
+      /generativelanguage\.googleapis\.com\/v1beta\/models\/gemini-3\.1-flash-lite:generateContent/,
+    );
     assert.equal(providerKey, "test-server-key");
     assert.equal(payload.answer, "Online reply");
-    assert.equal(payload.model, "gemini-3.5-flash-lite");
+    assert.equal(payload.model, "gemini-3.1-flash-lite");
     assert.doesNotMatch(JSON.stringify(payload), /test-server-key/);
   } finally {
     globalThis.fetch = originalFetch;
@@ -145,15 +146,20 @@ test("chat endpoint returns only explicitly requested, validated task actions", 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
     Response.json({
-      status: "completed",
-      steps: [
+      candidates: [
         {
-          type: "function_call",
-          id: "action-1",
-          name: "create_text_file",
-          arguments: {
-            filename: "../sky-note.txt",
-            content: "TASK_READY",
+          content: {
+            parts: [
+              {
+                functionCall: {
+                  name: "create_text_file",
+                  args: {
+                    filename: "../sky-note.txt",
+                    content: "TASK_READY",
+                  },
+                },
+              },
+            ],
           },
         },
       ],
