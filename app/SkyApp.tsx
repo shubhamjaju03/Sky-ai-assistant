@@ -3,7 +3,6 @@
 import type { ChangeEvent, FormEvent, KeyboardEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
-import type { MLCEngine } from "@mlc-ai/web-llm";
 
 type Role = "assistant" | "user";
 
@@ -12,6 +11,12 @@ type WebSource = {
   url: string;
   snippet: string;
 };
+
+type AssistantAction =
+  | { type: "open_website"; url: string }
+  | { type: "create_text_file"; filename: string; content: string }
+  | { type: "copy_text"; text: string }
+  | { type: "compose_email"; to?: string; subject: string; body: string };
 
 type ChatMessage = {
   id: string;
@@ -42,26 +47,24 @@ type SpeechRecognitionLike = {
   onerror: (() => void) | null;
 };
 
-const MODEL_ID = "Qwen3-0.6B-q4f16_1-MLC";
 const LIVE_WEB_ORIGIN =
   "https://sky-private-ai-shubham.shubhamjaju03.chatgpt.site";
 const CHAT_KEY = "sky-ai-chat-v1";
 const MEMORY_KEY = "sky-ai-memory-v1";
-const MODEL_NOTE = "downloaded automatically once, then cached on this device";
 
 const STARTER_MESSAGE: ChatMessage = {
   id: "welcome",
   role: "assistant",
   createdAt: Date.now(),
   content:
-    "Hey — I’m Sky. I can chat privately on this device and research live web questions with source links. My local conversation model prepares automatically—there is no download button to press.",
+    "Hey — I’m Sky. I’m ready instantly with online AI, live web research, memory, voice, files, and safe task actions. There’s no model download or setup.",
 };
 
 const QUICK_PROMPTS = [
   "Plan my day",
   "Search the live web",
   "Help me write",
-  "Brainstorm ideas",
+  "Create a text file",
 ];
 
 function makeId() {
@@ -90,13 +93,6 @@ function loadMemories(): string[] {
   }
 }
 
-function cleanModelText(value: string) {
-  return value
-    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .replace(/<\/?think>/gi, "")
-    .trimStart();
-}
-
 function researchQueryFor(prompt: string) {
   const value = prompt.trim();
   const explicit = value.match(
@@ -112,42 +108,6 @@ function researchQueryFor(prompt: string) {
     return value;
   }
   return null;
-}
-
-function identityNameFrom(results: WebSource[], query: string) {
-  const subject =
-    query.match(/^(?:who is|who's|tell me about)\s+@?([a-z0-9_.-]+)/i)?.[1] ??
-    query.match(/@?([a-z0-9]+_[a-z0-9_.-]+)/i)?.[1];
-  if (!subject) return null;
-
-  for (const result of results) {
-    const parenthesized = result.title.match(/\(([^@][^)]+)\)/)?.[1]?.trim();
-    if (parenthesized && /[a-z]{2}/i.test(parenthesized)) return parenthesized;
-    const leadingName = result.title.split(/\s+(?:\(|·|\||-|—)/)[0]?.trim();
-    if (
-      leadingName &&
-      leadingName.toLowerCase() !== subject.toLowerCase() &&
-      /^[a-z][a-z .'-]{2,}$/i.test(leadingName)
-    ) {
-      return leadingName;
-    }
-  }
-  return null;
-}
-
-function formatResearchAnswer(query: string, results: WebSource[]) {
-  if (!results.length) {
-    return `I searched the live web for “${query}”, but I couldn’t find reliable public results. I won’t guess—try adding a full name, website, or platform.`;
-  }
-  const identityName = identityNameFrom(results, query);
-  const introduction = identityName
-    ? `Public profiles matching “${query}” appear to belong to ${identityName}. Here’s what the matching sources say:`
-    : `Here’s what I found on the live web for “${query}”:`;
-  const details = results
-    .slice(0, 4)
-    .map((result, index) => `${index + 1}. ${result.title}\n${result.snippet}`)
-    .join("\n\n");
-  return `${introduction}\n\n${details}\n\nThese are public search results, and profile descriptions can be self-written or change over time.`;
 }
 
 function sourceHost(url: string) {
@@ -175,6 +135,42 @@ async function researchWeb(query: string): Promise<WebSource[]> {
     throw new Error(payload.error || "Live web research failed.");
   }
   return Array.isArray(payload.results) ? payload.results : [];
+}
+
+async function chatOnline(
+  messages: Array<{ role: Role; content: string }>,
+  memories: string[],
+  sources: WebSource[],
+) {
+  const baseUrl = Capacitor.isNativePlatform()
+    ? LIVE_WEB_ORIGIN
+    : window.location.origin;
+  const response = await fetch(new URL("/api/chat", baseUrl), {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messages,
+      memories,
+      sources,
+      locale: navigator.language,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
+  });
+  const payload = (await response.json()) as {
+    answer?: string;
+    actions?: AssistantAction[];
+    error?: string;
+  };
+  if (!response.ok) {
+    throw new Error(payload.error || "Online AI is temporarily unavailable.");
+  }
+  return {
+    answer: payload.answer || "I’m here. Could you rephrase that?",
+    actions: Array.isArray(payload.actions) ? payload.actions : [],
+  };
 }
 
 function localShortcut(prompt: string): string | null {
@@ -210,20 +206,12 @@ export function SkyApp() {
   const [attachment, setAttachment] = useState<{ name: string; text: string } | null>(
     null,
   );
-  const [modelState, setModelState] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >("loading");
-  const [progress, setProgress] = useState(0);
-  const [progressText, setProgressText] = useState(
-    `Preparing private AI — ${MODEL_NOTE}`,
-  );
+  const [isThinking, setIsThinking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const [memoryCount, setMemoryCount] = useState(0);
-  const engineRef = useRef<MLCEngine | null>(null);
-  const modelLoadStartedRef = useRef(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -242,8 +230,6 @@ export function SkyApp() {
       navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     }
 
-    void enableModel();
-
     return () => window.removeEventListener("beforeinstallprompt", beforeInstall);
   }, []);
 
@@ -257,51 +243,6 @@ export function SkyApp() {
     [messages],
   );
 
-  async function enableModel() {
-    if (engineRef.current || modelLoadStartedRef.current) return;
-    modelLoadStartedRef.current = true;
-    const hasWebGpu = "gpu" in navigator;
-    if (!hasWebGpu) {
-      modelLoadStartedRef.current = false;
-      setModelState("error");
-      setProgressText("This device needs a current Chrome or Edge browser with WebGPU.");
-      return;
-    }
-
-    setModelState("loading");
-    setProgressText(`Preparing private AI — ${MODEL_NOTE}`);
-    try {
-      const webllm = await import("@mlc-ai/web-llm");
-      const engine = await webllm.CreateMLCEngine(
-        MODEL_ID,
-        {
-          initProgressCallback: (report) => {
-            const next = Math.max(0, Math.min(100, Math.round(report.progress * 100)));
-            setProgress(next);
-            setProgressText(report.text || `Loading Free AI… ${next}%`);
-          },
-          logLevel: "WARN",
-        },
-        {
-          context_window_size: 2048,
-          temperature: 0.7,
-          top_p: 0.9,
-        },
-      );
-      engineRef.current = engine;
-      setProgress(100);
-      setModelState("ready");
-      setProgressText("Free AI ready • private on this device");
-    } catch (error) {
-      console.error(error);
-      modelLoadStartedRef.current = false;
-      setModelState("error");
-      setProgressText(
-        "Free AI could not start. Update Chrome/Edge, close heavy apps, then retry.",
-      );
-    }
-  }
-
   function addAssistant(content: string) {
     setMessages((current) => [
       ...current,
@@ -311,7 +252,7 @@ export function SkyApp() {
 
   async function sendMessage(forcedText?: string) {
     const visibleText = (forcedText ?? input).trim();
-    if (!visibleText) return;
+    if (!visibleText || isThinking) return;
 
     const userContent = attachment
       ? `${visibleText}\n\nAttached file: ${attachment.name}\n---\n${attachment.text}`
@@ -350,66 +291,17 @@ export function SkyApp() {
       addAssistant(shortcut);
       return;
     }
-    const researchQuery = researchQueryFor(visibleText);
-    if (researchQuery) {
-      const researchId = makeId();
-      setMessages((current) => [
-        ...current,
-        {
-          id: researchId,
-          role: "assistant",
-          content: "Searching the live web and checking public sources…",
-          createdAt: Date.now(),
-          pending: true,
-        },
-      ]);
-      try {
-        const sources = await researchWeb(researchQuery);
-        setMessages((current) =>
-          current.map((message) =>
-            message.id === researchId
-              ? {
-                  ...message,
-                  content: formatResearchAnswer(researchQuery, sources),
-                  pending: false,
-                  sources: sources.slice(0, 6),
-                }
-              : message,
-          ),
-        );
-      } catch (error) {
-        console.error(error);
-        setMessages((current) =>
-          current.map((message) =>
-            message.id === researchId
-              ? {
-                  ...message,
-                  content:
-                    "Live web research is temporarily unavailable. I won’t invent an answer—please retry in a moment.",
-                  pending: false,
-                }
-              : message,
-          ),
-        );
-      }
-      return;
-    }
-
-    const engine = engineRef.current;
-    if (!engine || modelState !== "ready") {
-      addAssistant(
-        "My local conversation model is still preparing automatically. Live web research, calculations, and memory already work—try again shortly for general chat.",
-      );
-      return;
-    }
 
     const assistantId = makeId();
+    setIsThinking(true);
     setMessages((current) => [
       ...current,
       {
         id: assistantId,
         role: "assistant",
-        content: "",
+        content: researchQueryFor(visibleText)
+          ? "Checking live sources…"
+          : "",
         createdAt: Date.now(),
         pending: true,
       },
@@ -424,43 +316,30 @@ export function SkyApp() {
         content: message.content,
       }));
 
+    let sources: WebSource[] = [];
     try {
-      const stream = await engine.chat.completions.create({
-        model: MODEL_ID,
-        stream: true,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are Sky, a warm, capable personal AI assistant. Be concise, practical, and honest. Live web questions are handled by a separate sourced research feature, so never pretend you browsed. The user's on-device memories are: " +
-              (memories.length ? memories.join("; ") : "none") +
-              ". Do not expose hidden reasoning. /no_think",
-          },
-          ...history,
-        ],
-        max_tokens: 500,
-        temperature: 0.7,
-      });
-
-      let fullText = "";
-      for await (const chunk of stream) {
-        const token = chunk.choices[0]?.delta?.content ?? "";
-        if (!token) continue;
-        fullText += token;
-        const clean = cleanModelText(fullText);
-        setMessages((current) =>
-          current.map((message) =>
-            message.id === assistantId
-              ? { ...message, content: clean, pending: true }
-              : message,
-          ),
-        );
+      const researchQuery = researchQueryFor(visibleText);
+      if (researchQuery) {
+        try {
+          sources = await researchWeb(researchQuery);
+        } catch (error) {
+          console.warn("Live research unavailable; continuing with online AI.", error);
+        }
       }
-      const clean = cleanModelText(fullText) || "I’m here. Could you rephrase that?";
+      const result = await chatOnline(history, memories, sources);
+      const actionNotes = await runActions(result.actions);
+      const content = actionNotes.length
+        ? `${result.answer}\n\n${actionNotes.join("\n")}`
+        : result.answer;
       setMessages((current) =>
         current.map((message) =>
           message.id === assistantId
-            ? { ...message, content: clean, pending: false }
+            ? {
+                ...message,
+                content,
+                pending: false,
+                sources: sources.slice(0, 6),
+              }
             : message,
         ),
       );
@@ -469,16 +348,58 @@ export function SkyApp() {
       setMessages((current) =>
         current.map((message) =>
           message.id === assistantId
-            ? {
-                ...message,
-                pending: false,
-                content:
-                  "The local model paused. Close a few heavy apps, then retry; your conversation is still saved.",
-              }
-            : message,
-        ),
-      );
+              ? {
+                  ...message,
+                  pending: false,
+                  content:
+                    error instanceof Error
+                      ? error.message
+                      : "Online AI is temporarily unavailable. Please try again.",
+                }
+              : message,
+          ),
+        );
+    } finally {
+      setIsThinking(false);
     }
+  }
+
+  async function runActions(actions: AssistantAction[]) {
+    const notes: string[] = [];
+    for (const action of actions.slice(0, 3)) {
+      if (action.type === "open_website") {
+        const anchor = document.createElement("a");
+        anchor.href = action.url;
+        anchor.target = "_blank";
+        anchor.rel = "noopener noreferrer";
+        anchor.click();
+        notes.push(`✓ Opened ${action.url}`);
+      } else if (action.type === "create_text_file") {
+        const blob = new Blob([action.content], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = action.filename;
+        anchor.click();
+        URL.revokeObjectURL(url);
+        notes.push(`✓ Created ${action.filename}`);
+      } else if (action.type === "copy_text") {
+        try {
+          await navigator.clipboard.writeText(action.text);
+          notes.push("✓ Copied to your clipboard");
+        } catch {
+          notes.push("Clipboard permission was blocked by the browser.");
+        }
+      } else if (action.type === "compose_email") {
+        const params = new URLSearchParams({
+          subject: action.subject,
+          body: action.body,
+        });
+        window.location.href = `mailto:${encodeURIComponent(action.to ?? "")}?${params}`;
+        notes.push("✓ Opened an email draft for your review");
+      }
+    }
+    return notes;
   }
 
   function newChat() {
@@ -635,8 +556,8 @@ export function SkyApp() {
         <div className="privacy-card">
           <span className="privacy-orbit">◌</span>
           <div>
-            <strong>Private by design</strong>
-            <span>Only web-search queries leave this device</span>
+            <strong>Private memory</strong>
+            <span>Memories stay here; AI prompts use secure online processing</span>
           </div>
         </div>
         <button className="sidebar-action" onClick={installApp}>
@@ -647,7 +568,7 @@ export function SkyApp() {
         </button>
         <div className="memory-row">
           <span>{memoryCount} memories</span>
-          <span>Free mode</span>
+          <span>Online mode</span>
         </div>
       </aside>
 
@@ -670,15 +591,11 @@ export function SkyApp() {
           </button>
           <div className="topbar-title">
             <strong>Sky AI</strong>
-            <span>Free, local assistant</span>
+            <span>Online agent · live web</span>
           </div>
-          <div className={`model-badge model-${modelState}`}>
+          <div className="model-badge model-ready">
             <span className="status-dot" />
-            {modelState === "ready"
-              ? "ON-DEVICE"
-              : modelState === "loading"
-                ? `${progress}%`
-                : "FREE AI"}
+            ONLINE
           </div>
         </header>
 
@@ -689,44 +606,12 @@ export function SkyApp() {
                 <div className="sky-orb" aria-hidden="true">
                   <span>✦</span>
                 </div>
-                <p className="eyebrow">YOUR PRIVATE AI</p>
+                <p className="eyebrow">READY INSTANTLY</p>
                 <h1>What can I help you think through?</h1>
                 <p className="welcome-copy">
-                  Conversations and memories stay on your device. Web research
-                  sends only the search query and returns linked public sources.
+                  AI replies and live research use the internet in the background.
+                  No model download, setup, or WebGPU is required.
                 </p>
-              </section>
-            )}
-
-            {modelState !== "ready" && (
-              <section className={`model-card ${modelState}`}>
-                <div className="model-card-icon">◎</div>
-                <div className="model-card-copy">
-                  <strong>
-                    {modelState === "loading"
-                      ? "Preparing your private AI"
-                      : modelState === "error"
-                        ? "Free AI needs attention"
-                        : "Enable Free AI"}
-                  </strong>
-                  <span>{progressText}</span>
-                  {modelState === "loading" && (
-                    <div className="progress-track">
-                      <span style={{ width: `${progress}%` }} />
-                    </div>
-                  )}
-                </div>
-                <button
-                  onClick={enableModel}
-                  disabled={modelState === "loading"}
-                  className="enable-button"
-                >
-                  {modelState === "loading"
-                    ? "Loading…"
-                    : modelState === "error"
-                      ? "Retry"
-                      : "Enable"}
-                </button>
               </section>
             )}
 
@@ -841,7 +726,7 @@ export function SkyApp() {
               <button
                 className="send-button"
                 type="submit"
-                disabled={!input.trim()}
+                disabled={!input.trim() || isThinking}
                 aria-label="Send message"
               >
                 ↑

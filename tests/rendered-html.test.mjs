@@ -33,9 +33,11 @@ test("server-renders the Sky AI application shell", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>Sky AI/);
-  assert.match(html, /Private by design/);
-  assert.match(html, /Preparing your private AI/);
-  assert.match(html, /Loading…/);
+  assert.match(html, /Private memory/);
+  assert.match(html, /READY INSTANTLY/);
+  assert.match(html, />ONLINE</);
+  assert.match(html, /No model download/);
+  assert.doesNotMatch(html, /Preparing your private AI|Loading Free AI|Enable Free AI/);
   assert.match(html, /manifest\.webmanifest/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
@@ -79,6 +81,119 @@ test("research endpoint returns public sources for an identity query", async () 
     assert.equal(payload.results[0].title, "Shubham Jaju (@shubham_jaju03) · Example");
     assert.equal(payload.results[0].url, "https://example.com/shubham");
     assert.equal(payload.results[0].snippet, "Software developer and community manager.");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("chat endpoint keeps the Gemini key server-side and returns an online reply", async () => {
+  const worker = await loadWorker("chat");
+  const originalFetch = globalThis.fetch;
+  let providerUrl = "";
+  let providerKey = "";
+  globalThis.fetch = async (input, init) => {
+    providerUrl = String(input);
+    providerKey = new Headers(init?.headers).get("x-goog-api-key") ?? "";
+    return Response.json({
+      status: "completed",
+      steps: [
+        {
+          type: "model_output",
+          content: [{ type: "text", text: "Online reply" }],
+        },
+      ],
+    });
+  };
+
+  try {
+    const response = await worker.fetch(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: "Hello Sky" }],
+          memories: [],
+          sources: [],
+        }),
+      }),
+      {
+        ASSETS: {
+          fetch: async () => new Response("Not found", { status: 404 }),
+        },
+        GEMINI_API_KEY: "test-server-key",
+      },
+      {
+        waitUntil() {},
+        passThroughOnException() {},
+      },
+    );
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.match(providerUrl, /generativelanguage\.googleapis\.com\/v1beta\/interactions/);
+    assert.equal(providerKey, "test-server-key");
+    assert.equal(payload.answer, "Online reply");
+    assert.equal(payload.model, "gemini-3.5-flash-lite");
+    assert.doesNotMatch(JSON.stringify(payload), /test-server-key/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("chat endpoint returns only explicitly requested, validated task actions", async () => {
+  const worker = await loadWorker("action");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json({
+      status: "completed",
+      steps: [
+        {
+          type: "function_call",
+          id: "action-1",
+          name: "create_text_file",
+          arguments: {
+            filename: "../sky-note.txt",
+            content: "TASK_READY",
+          },
+        },
+      ],
+    });
+
+  try {
+    const response = await worker.fetch(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            {
+              role: "user",
+              content: "Create a text file named sky-note.txt containing TASK_READY",
+            },
+          ],
+        }),
+      }),
+      {
+        ASSETS: {
+          fetch: async () => new Response("Not found", { status: 404 }),
+        },
+        GEMINI_API_KEY: "test-server-key",
+      },
+      {
+        waitUntil() {},
+        passThroughOnException() {},
+      },
+    );
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(payload.actions, [
+      {
+        type: "create_text_file",
+        filename: "_sky-note.txt",
+        content: "TASK_READY",
+      },
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
   }
