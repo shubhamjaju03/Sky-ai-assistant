@@ -30,7 +30,8 @@ test("server-renders the Sky AI application shell", async () => {
   const html = await response.text();
   assert.match(html, /<title>Sky AI/);
   assert.match(html, /Private by design/);
-  assert.match(html, /Enable Free AI/);
+  assert.match(html, /Preparing your private AI/);
+  assert.match(html, /Loading…/);
   assert.match(html, /manifest\.webmanifest/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });

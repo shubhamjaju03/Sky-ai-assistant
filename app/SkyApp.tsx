@@ -44,7 +44,7 @@ const STARTER_MESSAGE: ChatMessage = {
   role: "assistant",
   createdAt: Date.now(),
   content:
-    "Hey — I’m Sky. I can chat, remember details, read text files, take voice input, speak answers, calculate, and work privately on this device. Enable Free AI once to begin.",
+    "Hey — I’m Sky. I can chat, remember details, read text files, take voice input, speak answers, calculate, and start automatically with private AI on this device.",
 };
 
 const QUICK_PROMPTS = [
@@ -122,15 +122,18 @@ export function SkyApp() {
   );
   const [modelState, setModelState] = useState<
     "idle" | "loading" | "ready" | "error"
-  >("idle");
+  >("loading");
   const [progress, setProgress] = useState(0);
-  const [progressText, setProgressText] = useState("Free AI is not loaded");
+  const [progressText, setProgressText] = useState(
+    `Preparing private AI — ${MODEL_NOTE}`,
+  );
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const [memoryCount, setMemoryCount] = useState(0);
   const engineRef = useRef<MLCEngine | null>(null);
+  const modelLoadStartedRef = useRef(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -149,6 +152,8 @@ export function SkyApp() {
       navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     }
 
+    void enableModel();
+
     return () => window.removeEventListener("beforeinstallprompt", beforeInstall);
   }, []);
 
@@ -163,9 +168,11 @@ export function SkyApp() {
   );
 
   async function enableModel() {
-    if (engineRef.current || modelState === "loading") return;
+    if (engineRef.current || modelLoadStartedRef.current) return;
+    modelLoadStartedRef.current = true;
     const hasWebGpu = "gpu" in navigator;
     if (!hasWebGpu) {
+      modelLoadStartedRef.current = false;
       setModelState("error");
       setProgressText("This device needs a current Chrome or Edge browser with WebGPU.");
       return;
@@ -197,6 +204,7 @@ export function SkyApp() {
       setProgressText("Free AI ready • private on this device");
     } catch (error) {
       console.error(error);
+      modelLoadStartedRef.current = false;
       setModelState("error");
       setProgressText(
         "Free AI could not start. Update Chrome/Edge, close heavy apps, then retry.",
