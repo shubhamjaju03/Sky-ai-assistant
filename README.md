@@ -9,6 +9,15 @@ and reminders remain in the device's local storage.
 
 [Open Sky AI](https://sky-private-ai-shubham.shubhamjaju03.chatgpt.site/)
 
+## Downloads
+
+- [Download the latest Android debug APK](https://github.com/shubhamjaju03/Sky-ai-assistant/raw/refs/heads/main/releases/Sky-AI-latest-debug.apk)
+- [Verify the APK checksum](releases/SHA256SUMS.txt)
+- GitHub's **Code → Download ZIP** option contains the complete source project.
+
+The APK is debug-signed for direct testing. Android may ask you to allow
+installation from your browser or file manager.
+
 ## Features
 
 - Online AI chat with no model download
@@ -41,7 +50,8 @@ Requirements: Node.js 22.13 or newer.
 npm install
 ```
 
-Create `.env.local` for local development:
+Copy `.env.example` to `.env.local` for local development, then replace the
+placeholder value:
 
 ```text
 GEMINI_API_KEY=your_gemini_api_key
@@ -74,7 +84,8 @@ android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 Generated APKs and build caches are intentionally not committed because they
-can be reproduced from the backed-up source.
+can be reproduced from the backed-up source. A tested APK snapshot is included
+under `releases/` for convenient installation.
 
 ## Main project areas
 
